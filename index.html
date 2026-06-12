@@ -642,11 +642,13 @@ const PAGES = {
   users:                { title:'User Management', sub:'Manage users, roles & branch assignments' },
   'approval-rules':     { title:'Approval Rules', sub:'Configure workflow and routing' },
   reports:              { title:'Reports & Spend', sub:'Analytics across all branches' },
+  'admin-panel':        { title:'Admin Panel', sub:'System configuration & permissions' },
 };
 const NAV_ICONS = {
   dashboard:'ti-layout-dashboard','my-requests':'ti-file-text','new-request':'ti-circle-plus',
   'pending-approvals':'ti-clipboard-check',queue:'ti-stack-2','all-requests':'ti-files',
-  'leadership-approvals':'ti-crown',users:'ti-users','approval-rules':'ti-git-branch',reports:'ti-chart-bar',
+  'leadership-approvals':'ti-crown',users:'ti-users','approval-rules':'ti-git-branch',
+  reports:'ti-chart-bar','admin-panel':'ti-shield-lock',
 };
 const ROLE_NAV = {
   Requestor:         [null,['dashboard','my-requests','new-request']],
@@ -654,7 +656,7 @@ const ROLE_NAV = {
   'Procurement Admin':[null,['dashboard'],['Booking',['queue']],['Requests',['new-request','all-requests']]],
   Leadership:        [null,['dashboard'],['Approvals',['leadership-approvals']],['Requests',['all-requests']]],
   Finance:           [null,['dashboard'],['Data',['all-requests','reports']]],
-  'Super Admin':     [null,['dashboard'],['Operations',['all-requests']],['Administration',['users','approval-rules','reports']]],
+  'Super Admin':     [null,['dashboard'],['Operations',['all-requests']],['Administration',['users','approval-rules','reports','admin-panel']]],
 };
 
 function renderNav() {
@@ -716,6 +718,7 @@ function renderPage() {
     case 'users': c.innerHTML = renderUsers(); break;
     case 'approval-rules': c.innerHTML = renderApprovalRules(); break;
     case 'reports': c.innerHTML = renderReports(); break;
+    case 'admin-panel': c.innerHTML = renderAdminPanel(); break;
     default: c.innerHTML = '<div class="empty"><i class="ti ti-construction"></i><p>Coming soon</p></div>';
   }
 }
@@ -792,13 +795,16 @@ function renderDashboard() {
     </tr>`;
   }).join('');
 
+  const canSeeSpend = ['Procurement Admin','Finance','Leadership','Super Admin'].includes(CURRENT_USER.role);
+  const canSeeThreshold = ['Procurement Admin','Super Admin'].includes(CURRENT_USER.role);
+
   return `
   <div class="sg">
     <div class="sc acc"><div class="sl"><i class="ti ti-files" style="font-size:14px"></i>Total Requests</div><div class="sv">${total}</div></div>
     <div class="sc"><div class="sl"><i class="ti ti-clock" style="font-size:14px"></i>Pending Action</div><div class="sv">${pending}</div></div>
     <div class="sc"><div class="sl"><i class="ti ti-circle-check" style="font-size:14px"></i>Completed</div><div class="sv">${completed}</div></div>
-    <div class="sc"><div class="sl"><i class="ti ti-currency-dollar" style="font-size:14px"></i>Total Spend</div><div class="sv">${fmtAmt(spend)}</div></div>
-    <div class="sc"><div class="sl"><i class="ti ti-alert-triangle" style="font-size:14px"></i>Threshold</div><div class="sv">$${CONFIG.LEADERSHIP_THRESHOLD}</div><div class="ss">Leadership approval limit</div></div>
+    ${canSeeSpend ? `<div class="sc"><div class="sl"><i class="ti ti-currency-dollar" style="font-size:14px"></i>Total Spend</div><div class="sv">${fmtAmt(spend)}</div></div>` : ''}
+    ${canSeeThreshold ? `<div class="sc"><div class="sl"><i class="ti ti-alert-triangle" style="font-size:14px"></i>Threshold</div><div class="sv">$${CONFIG.LEADERSHIP_THRESHOLD}</div><div class="ss">Leadership approval limit</div></div>` : ''}
   </div>
   <div class="tw">
     <div class="th-row"><span class="tt">Recent Requests</span><button class="btn btn-outline btn-sm" onclick="navigate('all-requests')">View all</button></div>
@@ -1679,6 +1685,230 @@ function openNotifs() {
       <div class="pf"><button class="btn btn-outline" onclick="closePanel()">Close</button></div>
     </div>
   </div>`;
+}
+
+function renderAdminPanel() {
+  const roleColors = {
+    'Super Admin':'b-pur','Leadership':'b-gold','Finance':'b-ok',
+    'Procurement Admin':'b-info','Branch Approver':'b-warn','Requestor':'b-gray'
+  };
+  const allRoles = ['Requestor','Branch Approver','Procurement Admin','Leadership','Finance','Super Admin'];
+
+  return `
+  <div class="two-col" style="margin-bottom:24px">
+    <!-- LEFT: User Permissions -->
+    <div>
+      <div class="sh"><h3>User Permissions</h3>
+        <button class="btn btn-primary btn-sm" onclick="openAddUser()"><i class="ti ti-plus"></i> Add User</button>
+      </div>
+      <div class="tw">
+        <div class="th-row">
+          <div class="sb-box"><i class="ti ti-search" style="color:var(--muted);font-size:15px"></i>
+            <input placeholder="Search users..." oninput="adminFilterUsers(this.value)"/></div>
+          <select class="fs" onchange="adminFilterUsers('',this.value)">
+            <option value="">All Roles</option>
+            ${allRoles.map(r=>`<option>${r}</option>`).join('')}
+          </select>
+        </div>
+        <div id="admin-user-list">
+          ${_users.map(u => renderAdminUserRow(u, roleColors)).join('')}
+        </div>
+      </div>
+    </div>
+
+    <!-- RIGHT: Role Permissions Matrix -->
+    <div>
+      <div class="sh"><h3>Role Permissions</h3></div>
+      <div class="tw" style="overflow-x:auto">
+        <table style="min-width:100%;font-size:12px">
+          <thead>
+            <tr>
+              <th style="min-width:120px">Permission</th>
+              ${allRoles.map(r=>`<th style="text-align:center;min-width:80px">${r.replace(' ','\n')}</th>`).join('')}
+            </tr>
+          </thead>
+          <tbody>
+            ${[
+              ['Submit Requests',       [1,1,1,0,0,1]],
+              ['View Own Requests',     [1,1,1,1,1,1]],
+              ['View All Requests',     [0,0,1,1,1,1]],
+              ['Approve Requests',      [0,1,0,0,0,0]],
+              ['Leadership Approval',   [0,0,0,1,0,0]],
+              ['Book Travel',           [0,0,1,0,0,0]],
+              ['Send Confirmation Email',[0,0,1,0,0,0]],
+              ['View Reports',          [0,0,1,1,1,1]],
+              ['View Total Spend',      [0,0,1,1,1,1]],
+              ['View Threshold',        [0,0,1,0,0,1]],
+              ['Manage Users',          [0,0,0,0,0,1]],
+              ['Manage Branches',       [0,0,0,0,0,1]],
+              ['Edit Approval Rules',   [0,0,0,0,0,1]],
+              ['Access Admin Panel',    [0,0,0,0,0,1]],
+            ].map(([label,perms])=>`
+            <tr>
+              <td style="font-weight:500;padding:8px 12px">${label}</td>
+              ${perms.map(p=>`<td style="text-align:center;padding:8px 12px">
+                ${p ? '<i class="ti ti-check" style="color:var(--ok);font-size:15px"></i>' : '<i class="ti ti-minus" style="color:var(--border);font-size:15px"></i>'}
+              </td>`).join('')}
+            </tr>`).join('')}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- BOTTOM: Branch Approver Assignments -->
+  <div class="sh"><h3>Branch → Approver Assignments</h3>
+    <button class="btn btn-outline btn-sm" onclick="openAddBranch()"><i class="ti ti-plus"></i> Add Branch</button>
+  </div>
+  <div class="tw">
+    <table>
+      <thead><tr><th>Branch</th><th>Primary Approver</th><th>Backup Approver</th><th>Status</th><th></th></tr></thead>
+      <tbody>
+        ${_branches.map(b=>`
+        <tr>
+          <td><span class="btag">${b.name}</span></td>
+          <td style="font-size:13px">${b.primaryApproverEmail||'<span style="color:var(--err)">⚠ Not assigned</span>'}</td>
+          <td style="font-size:13px;color:var(--muted)">${b.backupApproverEmail||'—'}</td>
+          <td>${b.active==='TRUE'?'<span class="bdg b-ok">Active</span>':'<span class="bdg b-gray">Inactive</span>'}</td>
+          <td><button class="btn btn-outline btn-sm"><i class="ti ti-edit"></i> Edit</button></td>
+        </tr>`).join('')}
+      </tbody>
+    </table>
+  </div>`;
+}
+
+function renderAdminUserRow(u, roleColors) {
+  const branches = (u.branches||'').split('|').filter(Boolean);
+  return `<div class="ur-row" id="aur-${u.id}">
+    <div class="ur-av">${(u.name||'?').split(' ').map(n=>n[0]).join('').slice(0,2).toUpperCase()}</div>
+    <div class="ur-ud" style="flex:1;min-width:0">
+      <div class="un">${u.name}</div>
+      <div class="ub">${u.email}</div>
+      <div class="bt" style="margin-top:4px">${branches.map(b=>`<span class="btag">${b}</span>`).join('')}</div>
+    </div>
+    <span class="bdg ${roleColors[u.role]||'b-gray'}" style="flex-shrink:0">${u.role}</span>
+    <div style="display:flex;gap:6px;margin-left:8px;flex-shrink:0">
+      <button class="btn btn-outline btn-sm" onclick="openEditUserFull('${u.email}')"><i class="ti ti-edit"></i></button>
+      <button class="btn btn-err btn-sm" onclick="toggleUserActive('${u.id}','${u.active}')">
+        <i class="ti ${u.active==='TRUE'?'ti-user-off':'ti-user-check'}"></i>
+      </button>
+    </div>
+  </div>`;
+}
+
+function adminFilterUsers(search, role) {
+  const list = document.getElementById('admin-user-list');
+  if (!list) return;
+  const s = (search||'').toLowerCase();
+  const r = role||'';
+  const roleColors = {'Super Admin':'b-pur','Leadership':'b-gold','Finance':'b-ok','Procurement Admin':'b-info','Branch Approver':'b-warn','Requestor':'b-gray'};
+  const filtered = _users.filter(u => {
+    const matchSearch = !s || u.name.toLowerCase().includes(s) || u.email.toLowerCase().includes(s) || (u.branches||'').toLowerCase().includes(s);
+    const matchRole = !r || u.role === r;
+    return matchSearch && matchRole;
+  });
+  list.innerHTML = filtered.length
+    ? filtered.map(u => renderAdminUserRow(u, roleColors)).join('')
+    : '<div class="empty" style="padding:20px"><p>No users match.</p></div>';
+}
+
+async function toggleUserActive(userID, currentActive) {
+  const newVal = currentActive === 'TRUE' ? 'FALSE' : 'TRUE';
+  const data = await sheetsGet('Users!A:A');
+  const rows = data.values||[];
+  const idx = rows.findIndex(r=>r[0]===userID);
+  if (idx < 1) { toast('User not found','err'); return; }
+  await sheetsUpdate(`Users!H${idx+1}`, [[newVal]]);
+  toast(newVal==='TRUE' ? 'User reactivated.' : 'User deactivated.', newVal==='TRUE'?'ok':'warn');
+  await navigate('admin-panel');
+}
+
+function openEditUserFull(email) {
+  const user = _users.find(u=>u.email===email);
+  if (!user) return;
+  const branches = _branches.filter(b=>b.active==='TRUE');
+  const allRoles = ['Requestor','Branch Approver','Procurement Admin','Leadership','Finance','Super Admin'];
+  const userBranches = (user.branches||'').split('|').filter(Boolean);
+
+  const ov = document.getElementById('overlays');
+  ov.innerHTML = `
+  <div class="po" onclick="if(event.target===this)closePanel()">
+    <div class="panel" style="max-width:500px">
+      <div class="ph"><i class="ti ti-user-edit" style="font-size:20px;color:var(--navy)"></i>
+        <h2>Edit User — ${user.name}</h2>
+        <button class="pc" onclick="closePanel()"><i class="ti ti-x" style="font-size:18px"></i></button>
+      </div>
+      <div class="pb">
+        <div class="fr full"><div class="fg"><label>Full Name</label><input id="eu-name" value="${user.name}"/></div></div>
+        <div class="fr full"><div class="fg"><label>Email</label><input value="${user.email}" readonly style="background:var(--bg)"/></div></div>
+        <div class="fr">
+          <div class="fg"><label>Role <span class="req">*</span></label>
+            <select id="eu-role">
+              ${allRoles.map(r=>`<option${user.role===r?' selected':''}>${r}</option>`).join('')}
+            </select>
+          </div>
+          <div class="fg"><label>Primary Branch</label>
+            <select id="eu-primary">
+              <option value="">— Select —</option>
+              ${branches.map(b=>`<option${user.primaryBranch===b.name?' selected':''}>${b.name}</option>`).join('')}
+            </select>
+          </div>
+        </div>
+        <div class="fr full">
+          <div class="fg">
+            <label>Branch Access (check all that apply)</label>
+            <div style="display:flex;flex-wrap:wrap;gap:8px;padding:10px;border:1px solid var(--border);border-radius:7px;background:var(--bg);max-height:200px;overflow-y:auto">
+              ${branches.map(b=>`<label style="display:flex;align-items:center;gap:5px;font-size:12px;cursor:pointer;font-weight:400;white-space:nowrap">
+                <input type="checkbox" class="eu-branch-cb" value="${b.name}" ${userBranches.includes(b.name)?'checked':''} style="width:auto;padding:0;border:none"> ${b.name}
+              </label>`).join('')}
+            </div>
+          </div>
+        </div>
+        <div class="fr full">
+          <div class="fg"><label>Assigned Approver</label>
+            <select id="eu-approver">
+              <option value="">— None —</option>
+              ${_users.filter(u=>u.role==='Branch Approver'||u.role==='Leadership'||u.role==='Procurement Admin').map(u=>`<option value="${u.email}"${user.approverEmail===u.email?' selected':''}>${u.name}</option>`).join('')}
+            </select>
+          </div>
+        </div>
+        <div class="fr">
+          <div class="fg"><label>Active</label>
+            <select id="eu-active">
+              <option value="TRUE"${user.active==='TRUE'?' selected':''}>Active</option>
+              <option value="FALSE"${user.active!=='TRUE'?' selected':''}>Inactive</option>
+            </select>
+          </div>
+        </div>
+      </div>
+      <div class="pf">
+        <button class="btn btn-outline" onclick="closePanel()">Cancel</button>
+        <button class="btn btn-primary" onclick="saveEditUser('${user.email}')"><i class="ti ti-device-floppy"></i> Save Changes</button>
+      </div>
+    </div>
+  </div>`;
+}
+
+async function saveEditUser(email) {
+  const data = await sheetsGet('Users!A:J');
+  const rows = data.values||[];
+  const idx = rows.findIndex(r=>r[2]===email);
+  if (idx < 1) { toast('User not found','err'); return; }
+
+  const name = gv('eu-name');
+  const role = gv('eu-role');
+  const primary = gv('eu-primary');
+  const approver = gv('eu-approver');
+  const active = gv('eu-active');
+  const extraBranches = [...document.querySelectorAll('.eu-branch-cb:checked')].map(c=>c.value);
+  const allBranches = [...new Set([primary,...extraBranches].filter(Boolean))].join('|');
+
+  showLoading('Saving...');
+  await sheetsUpdate(`Users!B${idx+1}:J${idx+1}`, [[name, email, role, allBranches, primary, approver, active, rows[idx][8]||'', rows[idx][9]||'']]);
+  toast(`${name} updated successfully.`, 'ok');
+  closePanel();
+  await navigate('admin-panel');
+  hideLoading();
 }
 
 function filterTable(el) {
