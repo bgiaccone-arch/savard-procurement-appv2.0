@@ -1,0 +1,1733 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Savard Group — Procurement Portal</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@latest/tabler-icons.min.css">
+
+<!-- ============================================================
+  CONFIGURATION — edit these two values before deploying
+  1. SHEET_ID    → 18F9Ng44LN9KPpCGNI2Lk2-aDxRSdhjZi4OtxQlqZcls
+  2. CLIENT_ID   → 348102211173-25qem3fbqq9l3r9tl7v584dnb9a9m5k8.apps.googleusercontent.com
+                   (see SETUP.md for instructions)
+  ============================================================ -->
+<script>
+  const CONFIG = {
+    SHEET_ID:  "18F9Ng44LN9KPpCGNI2Lk2-aDxRSdhjZi4OtxQlqZcls",
+    CLIENT_ID: "348102211173-25qem3fbqq9l3r9tl7v584dnb9a9m5k8.apps.googleusercontent.com",
+    SCOPES: [
+      "https://www.googleapis.com/auth/spreadsheets",
+      "https://www.googleapis.com/auth/gmail.send",
+      "https://www.googleapis.com/auth/userinfo.email",
+      "https://www.googleapis.com/auth/userinfo.profile",
+    ].join(" "),
+    LEADERSHIP_THRESHOLD: 400,   // overwritten from Settings sheet on load
+    VERSION: "1.0.0",
+  };
+</script>
+
+<style>
+:root {
+  --navy:#0f1f3d; --navy-l:#1a2f54; --navy-m:#243d6b;
+  --gold:#d4a017; --gold-l:#f0c040; --gold-d:#8a6810;
+  --bg:#f4f5f7; --card:#fff; --border:#e2e4e9;
+  --text:#1a1d23; --muted:#6b7280; --xs:#9ca3af;
+  --ok-bg:#ecfdf5; --ok:#059669; --ok-b:#a7f3d0;
+  --warn-bg:#fffbeb; --warn:#d97706; --warn-b:#fde68a;
+  --err-bg:#fef2f2; --err:#dc2626; --err-b:#fecaca;
+  --info-bg:#eff6ff; --info:#2563eb; --info-b:#bfdbfe;
+  --pur-bg:#f5f3ff; --pur:#7c3aed; --pur-b:#ddd6fe;
+  --sw:220px; --hh:58px;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Segoe UI',system-ui,sans-serif;background:var(--bg);color:var(--text);font-size:14px}
+.app{display:flex;height:100vh;overflow:hidden}
+
+/* SIDEBAR */
+.sb{width:var(--sw);background:var(--navy);display:flex;flex-direction:column;flex-shrink:0}
+.sb-logo{padding:18px 20px 14px;border-bottom:1px solid rgba(255,255,255,.08)}
+.sb-logo .lt{font-size:17px;font-weight:700;color:#fff;letter-spacing:-.3px}
+.sb-logo .ls{font-size:11px;color:rgba(255,255,255,.4);margin-top:2px;text-transform:uppercase;letter-spacing:.8px}
+.sb-user{padding:12px 16px;border-bottom:1px solid rgba(255,255,255,.08);display:flex;align-items:center;gap:10px}
+.av{width:32px;height:32px;border-radius:50%;background:var(--gold);display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;color:var(--navy);flex-shrink:0;overflow:hidden}
+.av img{width:100%;height:100%;object-fit:cover;border-radius:50%}
+.ui .un{font-size:13px;font-weight:600;color:#fff}
+.ui .ur{font-size:11px;color:rgba(255,255,255,.45);margin-top:1px}
+.sb-nav{flex:1;padding:8px;overflow-y:auto}
+.ns{font-size:10px;text-transform:uppercase;letter-spacing:.9px;color:rgba(255,255,255,.3);padding:10px 10px 4px}
+.ni{display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:7px;cursor:pointer;color:rgba(255,255,255,.6);font-size:13px;margin-bottom:1px;transition:all .15s}
+.ni:hover{background:rgba(255,255,255,.07);color:rgba(255,255,255,.9)}
+.ni.act{background:var(--gold);color:var(--navy);font-weight:600}
+.ni.act i{color:var(--navy)}
+.ni i{font-size:17px;flex-shrink:0}
+.nb{margin-left:auto;background:var(--err);color:#fff;font-size:10px;font-weight:700;border-radius:10px;padding:1px 6px}
+.ni.act .nb{background:var(--navy);color:var(--gold)}
+
+/* MAIN */
+.main{flex:1;display:flex;flex-direction:column;overflow:hidden}
+.topbar{height:var(--hh);background:var(--card);border-bottom:1px solid var(--border);display:flex;align-items:center;padding:0 24px;gap:16px;flex-shrink:0}
+.tb-title{font-size:18px;font-weight:700}
+.tb-sub{font-size:13px;color:var(--muted)}
+.tb-actions{margin-left:auto;display:flex;align-items:center;gap:10px}
+.content{flex:1;overflow-y:auto;padding:24px}
+
+/* BUTTONS */
+.btn{display:inline-flex;align-items:center;gap:6px;padding:7px 14px;border-radius:7px;font-size:13px;font-weight:500;cursor:pointer;border:none;transition:all .15s;font-family:inherit}
+.btn-primary{background:var(--navy);color:#fff}.btn-primary:hover{background:var(--navy-l)}
+.btn-gold{background:var(--gold);color:var(--navy);font-weight:700}.btn-gold:hover{background:var(--gold-l)}
+.btn-outline{background:transparent;border:1px solid var(--border);color:var(--text)}.btn-outline:hover{background:var(--bg)}
+.btn-sm{padding:5px 10px;font-size:12px}
+.btn-ok{background:var(--ok-bg);color:var(--ok);border:1px solid var(--ok-b)}
+.btn-err{background:var(--err-bg);color:var(--err);border:1px solid var(--err-b)}
+
+/* NOTIF BTN */
+.nb-btn{position:relative;background:none;border:none;cursor:pointer;padding:6px;color:var(--muted)}
+.nb-dot{position:absolute;top:4px;right:4px;width:8px;height:8px;background:var(--err);border-radius:50%;border:2px solid var(--card)}
+
+/* STATS */
+.sg{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:14px;margin-bottom:24px}
+.sc{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:16px}
+.sc.acc{border-left:3px solid var(--gold)}
+.sl{font-size:12px;color:var(--muted);margin-bottom:6px;display:flex;align-items:center;gap:6px}
+.sv{font-size:26px;font-weight:700;line-height:1}
+.ss{font-size:11px;color:var(--ok);margin-top:4px}
+
+/* TABLE */
+.tw{background:var(--card);border:1px solid var(--border);border-radius:10px;overflow:hidden}
+.th-row{padding:14px 18px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.tt{font-weight:600;font-size:14px}
+.sb-box{display:flex;align-items:center;gap:8px;background:var(--bg);border:1px solid var(--border);border-radius:7px;padding:6px 12px;flex:1;max-width:260px}
+.sb-box input{border:none;background:none;outline:none;font-size:13px;color:var(--text);width:100%}
+.fs{border:1px solid var(--border);border-radius:7px;padding:6px 10px;font-size:13px;background:var(--bg);color:var(--text);cursor:pointer;outline:none;font-family:inherit}
+table{width:100%;border-collapse:collapse}
+th{background:var(--bg);padding:10px 16px;text-align:left;font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:var(--muted);font-weight:600;border-bottom:1px solid var(--border)}
+td{padding:12px 16px;border-bottom:1px solid var(--border);font-size:13px;vertical-align:middle}
+tr:last-child td{border-bottom:none}
+tr:hover td{background:#fafbfc}
+.cr{cursor:pointer}
+
+/* BADGES */
+.bdg{display:inline-flex;align-items:center;gap:4px;padding:3px 9px;border-radius:20px;font-size:11px;font-weight:600;white-space:nowrap}
+.b-ok{background:var(--ok-bg);color:var(--ok);border:1px solid var(--ok-b)}
+.b-warn{background:var(--warn-bg);color:var(--warn);border:1px solid var(--warn-b)}
+.b-err{background:var(--err-bg);color:var(--err);border:1px solid var(--err-b)}
+.b-info{background:var(--info-bg);color:var(--info);border:1px solid var(--info-b)}
+.b-pur{background:var(--pur-bg);color:var(--pur);border:1px solid var(--pur-b)}
+.b-gray{background:#f3f4f6;color:#6b7280;border:1px solid #e5e7eb}
+.b-navy{background:#eef2ff;color:var(--navy);border:1px solid #c7d2fe}
+.b-gold{background:#fffbeb;color:var(--gold-d);border:1px solid #fde68a}
+
+/* TYPE CHIP */
+.tc{display:inline-flex;align-items:center;gap:5px;font-size:12px;color:var(--muted)}
+.tc i{font-size:15px}
+
+/* PANEL */
+.po{position:fixed;inset:0;background:rgba(0,0,0,.35);z-index:100;display:flex;justify-content:flex-end}
+.panel{width:560px;max-width:95vw;background:var(--card);height:100%;overflow-y:auto;box-shadow:-4px 0 24px rgba(0,0,0,.12);display:flex;flex-direction:column}
+.ph{padding:20px 24px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:12px;flex-shrink:0}
+.ph h2{font-size:16px;font-weight:700}
+.pc{margin-left:auto;background:none;border:none;cursor:pointer;color:var(--muted);padding:4px;border-radius:5px}
+.pc:hover{background:var(--bg)}
+.pb{padding:24px;flex:1;overflow-y:auto}
+.pf{padding:16px 24px;border-top:1px solid var(--border);display:flex;gap:10px;justify-content:flex-end;flex-shrink:0}
+
+/* FORM */
+.fs-sec{margin-bottom:24px}
+.fs-title{font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.6px;color:var(--muted);margin-bottom:14px;padding-bottom:8px;border-bottom:1px solid var(--border)}
+.fr{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px}
+.fr.full{grid-template-columns:1fr}
+.fg{display:flex;flex-direction:column;gap:5px}
+.fg label{font-size:12px;font-weight:600;color:var(--muted)}
+.fg input,.fg select,.fg textarea{border:1px solid var(--border);border-radius:7px;padding:8px 12px;font-size:13px;color:var(--text);background:var(--card);outline:none;transition:border .15s;font-family:inherit}
+.fg input:focus,.fg select:focus,.fg textarea:focus{border-color:var(--navy)}
+.fg textarea{resize:vertical;min-height:70px}
+.fg .hint{font-size:11px;color:var(--xs)}
+.req{color:var(--err)}
+
+/* ITEM CARDS */
+.ic{border:1px solid var(--border);border-radius:10px;padding:16px;margin-bottom:14px;background:var(--bg);position:relative}
+.ich{display:flex;align-items:center;gap:10px;margin-bottom:14px}
+.ich .itl{font-size:13px;font-weight:600}
+.ir{margin-left:auto;background:none;border:none;cursor:pointer;color:var(--muted);padding:4px;border-radius:5px}
+.ir:hover{color:var(--err);background:var(--err-bg)}
+.air{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}
+.aib{display:inline-flex;align-items:center;gap:6px;padding:7px 12px;border-radius:7px;border:1px dashed var(--border);background:transparent;font-size:12px;font-weight:500;cursor:pointer;color:var(--muted);transition:all .15s;font-family:inherit}
+.aib:hover{border-color:var(--navy);color:var(--navy);background:var(--info-bg)}
+
+/* TIMELINE */
+.tl{display:flex;flex-direction:column;gap:0}
+.tli{display:flex;gap:14px;padding-bottom:20px}
+.tll{display:flex;flex-direction:column;align-items:center;width:28px;flex-shrink:0}
+.tld{width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:14px;flex-shrink:0}
+.tld.done{background:var(--ok-bg);color:var(--ok);border:2px solid var(--ok-b)}
+.tld.act{background:var(--info-bg);color:var(--info);border:2px solid var(--info-b)}
+.tld.pend{background:var(--bg);color:var(--xs);border:2px solid var(--border)}
+.tld.rej{background:var(--err-bg);color:var(--err);border:2px solid var(--err-b)}
+.tline{flex:1;width:2px;background:var(--border);margin-top:4px;min-height:20px}
+.tline.done{background:var(--ok-b)}
+.tlc{padding-top:3px;flex:1}
+.tlt{font-size:13px;font-weight:600}
+.tlm{font-size:11px;color:var(--muted);margin-top:2px}
+
+/* DETAIL */
+.dg{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+.dl{font-size:11px;color:var(--muted);font-weight:600;text-transform:uppercase;letter-spacing:.4px;margin-bottom:3px}
+.dv{font-size:13px;color:var(--text)}
+.dd{border:none;border-top:1px solid var(--border);margin:16px 0}
+
+/* AMOUNT */
+.amt{font-weight:700}.amt.over{color:var(--warn)}
+.pf-flag{display:inline-flex;align-items:center;gap:4px;font-size:11px;font-weight:600;color:var(--warn);background:var(--warn-bg);border:1px solid var(--warn-b);padding:2px 7px;border-radius:10px}
+
+/* DOC LINKS */
+.dl-link{display:inline-flex;align-items:center;gap:5px;color:var(--info);font-size:12px;text-decoration:none;padding:3px 8px;background:var(--info-bg);border-radius:5px;border:1px solid var(--info-b)}
+
+/* BAR CHART */
+.bc{display:flex;align-items:flex-end;gap:8px;padding-top:8px}
+.bcol{display:flex;flex-direction:column;align-items:center;gap:4px;flex:1}
+.bar{width:100%;border-radius:4px 4px 0 0;background:var(--navy);min-height:4px}
+.blbl{font-size:10px;color:var(--muted);text-align:center}
+.bval{font-size:10px;font-weight:600;color:var(--navy)}
+
+/* USER ROW */
+.ur-row{display:flex;align-items:center;gap:12px;padding:12px 16px;border-bottom:1px solid var(--border)}
+.ur-row:last-child{border-bottom:none}
+.ur-av{width:36px;height:36px;border-radius:50%;background:var(--navy);display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;color:var(--gold);flex-shrink:0}
+.ur-ud .un{font-size:13px;font-weight:600}
+.ur-ud .ub{font-size:11px;color:var(--muted)}
+.bt{display:flex;flex-wrap:wrap;gap:4px}
+.btag{background:var(--info-bg);color:var(--info);border:1px solid var(--info-b);padding:2px 8px;border-radius:12px;font-size:11px;font-weight:500}
+
+/* TOAST */
+.toast{position:fixed;bottom:24px;right:24px;background:var(--navy);color:#fff;padding:12px 18px;border-radius:10px;font-size:13px;font-weight:500;z-index:999;display:flex;align-items:center;gap:10px;box-shadow:0 4px 16px rgba(0,0,0,.2);animation:slideUp .25s ease}
+@keyframes slideUp{from{transform:translateY(20px);opacity:0}to{transform:translateY(0);opacity:1}}
+.toast.ok{border-left:4px solid var(--ok)}
+.toast.err{border-left:4px solid var(--err)}
+.toast.warn{border-left:4px solid var(--gold)}
+
+/* LOGIN */
+.login-wrap{display:flex;align-items:center;justify-content:center;height:100vh;background:var(--navy)}
+.login-card{background:var(--card);border-radius:16px;padding:40px;width:360px;text-align:center;box-shadow:0 8px 40px rgba(0,0,0,.25)}
+.login-logo{font-size:22px;font-weight:800;color:var(--navy);margin-bottom:4px}
+.login-sub{font-size:13px;color:var(--muted);margin-bottom:28px}
+.login-divider{border:none;border-top:1px solid var(--border);margin:20px 0}
+.login-note{font-size:11px;color:var(--xs);margin-top:16px}
+
+/* LOADING SPINNER */
+.spin{display:inline-block;width:18px;height:18px;border:2px solid rgba(255,255,255,.3);border-top-color:#fff;border-radius:50%;animation:spin .6s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+/* MODAL */
+.mo{position:fixed;inset:0;background:rgba(0,0,0,.4);z-index:200;display:flex;align-items:center;justify-content:center}
+.mcard{background:var(--card);border-radius:12px;padding:24px;width:340px;box-shadow:0 8px 32px rgba(0,0,0,.15)}
+.mcard h3{font-size:16px;font-weight:700;margin-bottom:4px}
+.mcard p{font-size:13px;color:var(--muted);margin-bottom:16px}
+
+/* SECTION HEAD */
+.sh{display:flex;align-items:center;justify-content:space-between;margin-bottom:16px}
+.sh h3{font-size:15px;font-weight:700}
+.two-col{display:grid;grid-template-columns:1fr 1fr;gap:20px}
+@media(max-width:900px){.two-col{grid-template-columns:1fr}}
+
+/* EMPTY */
+.empty{text-align:center;padding:40px 20px;color:var(--muted)}
+.empty i{font-size:40px;margin-bottom:12px;display:block;color:var(--border)}
+
+/* LOADING OVERLAY */
+.loading-ov{position:fixed;inset:0;background:rgba(255,255,255,.8);z-index:500;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:12px}
+.loading-ov .ls{font-size:14px;color:var(--muted)}
+.spin-lg{width:36px;height:36px;border:3px solid var(--border);border-top-color:var(--navy);border-radius:50%;animation:spin .7s linear infinite}
+
+/* INFO BOX */
+.infobox{padding:12px 14px;border-radius:8px;font-size:12px;display:flex;align-items:flex-start;gap:8px}
+.infobox.info{background:var(--info-bg);border:1px solid var(--info-b);color:var(--info)}
+.infobox.warn{background:var(--warn-bg);border:1px solid var(--warn-b);color:var(--warn)}
+
+/* MOBILE */
+@media(max-width:640px){
+  .sb{display:none}
+  .fr{grid-template-columns:1fr}
+  .dg{grid-template-columns:1fr}
+  .two-col{grid-template-columns:1fr}
+  .panel{width:100vw}
+}
+</style>
+</head>
+<body>
+
+<!-- LOGIN SCREEN -->
+<div id="login-screen" class="login-wrap">
+  <div class="login-card">
+    <div class="login-logo">Savard Group</div>
+    <div class="login-sub">Procurement Portal</div>
+    <button class="btn btn-primary" id="google-signin-btn" onclick="signIn()" style="width:100%;justify-content:center;padding:12px;font-size:14px">
+      <svg width="18" height="18" viewBox="0 0 48 48"><path fill="#FFC107" d="M43.611 20.083H42V20H24v8h11.303c-1.649 4.657-6.08 8-11.303 8-6.627 0-12-5.373-12-12s5.373-12 12-12c3.059 0 5.842 1.154 7.961 3.039l5.657-5.657C34.046 6.053 29.268 4 24 4 12.955 4 4 12.955 4 24s8.955 20 20 20 20-8.955 20-20c0-1.341-.138-2.65-.389-3.917z"/><path fill="#FF3D00" d="M6.306 14.691l6.571 4.819C14.655 15.108 18.961 12 24 12c3.059 0 5.842 1.154 7.961 3.039l5.657-5.657C34.046 6.053 29.268 4 24 4 16.318 4 9.656 8.337 6.306 14.691z"/><path fill="#4CAF50" d="M24 44c5.166 0 9.86-1.977 13.409-5.192l-6.19-5.238A11.91 11.91 0 0 1 24 36c-5.202 0-9.619-3.317-11.283-7.946l-6.522 5.025C9.505 39.556 16.227 44 24 44z"/><path fill="#1976D2" d="M43.611 20.083H42V20H24v8h11.303a12.04 12.04 0 0 1-4.087 5.571l.003-.002 6.19 5.238C36.971 39.205 44 34 44 24c0-1.341-.138-2.65-.389-3.917z"/></svg>
+      Sign in with Google
+    </button>
+    <div class="login-divider"></div>
+    <div class="login-note">Access is restricted to @savardgroup.net accounts.<br>Contact your admin if you need access.</div>
+    <div id="login-error" style="display:none;margin-top:12px;font-size:12px;color:var(--err);background:var(--err-bg);padding:8px 12px;border-radius:6px;border:1px solid var(--err-b)"></div>
+  </div>
+</div>
+
+<!-- MAIN APP (hidden until logged in) -->
+<div id="app-screen" style="display:none">
+  <div class="app">
+    <aside class="sb">
+      <div class="sb-logo">
+        <div class="lt">Savard Group</div>
+        <div class="ls">Procurement Portal</div>
+      </div>
+      <div class="sb-user">
+        <div class="av" id="user-av"><span id="user-initials">?</span></div>
+        <div class="ui">
+          <div class="un" id="user-name">Loading...</div>
+          <div class="ur" id="user-role">...</div>
+        </div>
+      </div>
+      <nav class="sb-nav" id="sidebar-nav"></nav>
+    </aside>
+    <div class="main">
+      <header class="topbar">
+        <div>
+          <div class="tb-title" id="page-title">Dashboard</div>
+          <div class="tb-sub" id="page-sub"></div>
+        </div>
+        <div class="tb-actions">
+          <button class="nb-btn" onclick="openNotifs()">
+            <i class="ti ti-bell" style="font-size:20px"></i>
+            <span class="nb-dot" id="notif-dot"></span>
+          </button>
+          <button class="btn btn-gold" id="new-req-btn" onclick="openNewRequest()">
+            <i class="ti ti-plus"></i> New Request
+          </button>
+          <button class="btn btn-outline btn-sm" onclick="signOut()">
+            <i class="ti ti-logout"></i>
+          </button>
+        </div>
+      </header>
+      <div class="content" id="main-content">
+        <div class="empty"><i class="ti ti-loader"></i><p>Loading...</p></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- PANELS -->
+<div id="overlays"></div>
+<!-- TOAST -->
+<div id="toast-container"></div>
+
+<!-- Google Identity Services -->
+<script src="https://accounts.google.com/gsi/client" async defer></script>
+
+<script>
+// ═══════════════════════════════════════════════════════════
+//  AUTH
+// ═══════════════════════════════════════════════════════════
+let ACCESS_TOKEN = null;
+let TOKEN_EXPIRY = 0;
+let CURRENT_USER = null; // from Users sheet
+let CURRENT_PROFILE = null; // from Google
+
+function signIn() {
+  const btn = document.getElementById('google-signin-btn');
+  btn.innerHTML = '<span class="spin"></span> Signing in...';
+  btn.disabled = true;
+
+  const client = google.accounts.oauth2.initTokenClient({
+    client_id: CONFIG.CLIENT_ID,
+    scope: CONFIG.SCOPES,
+    callback: async (resp) => {
+      if (resp.error) {
+        showLoginError('Sign-in failed: ' + resp.error);
+        btn.innerHTML = '<svg>...</svg> Sign in with Google';
+        btn.disabled = false;
+        return;
+      }
+      ACCESS_TOKEN = resp.access_token;
+      TOKEN_EXPIRY = Date.now() + (resp.expires_in * 1000);
+      await loadUserProfile();
+    },
+  });
+  client.requestAccessToken({ prompt: 'consent' });
+}
+
+async function loadUserProfile() {
+  try {
+    const res = await gFetch('https://www.googleapis.com/oauth2/v2/userinfo');
+    CURRENT_PROFILE = res;
+
+    // Check domain
+    if (!res.email.endsWith('@savardgroup.net')) {
+      showLoginError('Access restricted to @savardgroup.net accounts. Signed in as: ' + res.email);
+      ACCESS_TOKEN = null;
+      document.getElementById('google-signin-btn').disabled = false;
+      document.getElementById('google-signin-btn').innerHTML = '<svg width="18"...>...</svg> Sign in with Google';
+      return;
+    }
+
+    // Load user record from sheet
+    await loadSettings();
+    await loadCurrentUser(res.email);
+    showApp();
+  } catch (e) {
+    showLoginError('Failed to load profile: ' + e.message);
+  }
+}
+
+async function loadCurrentUser(email) {
+  try {
+    const data = await sheetsGet('Users!A2:J500');
+    const rows = data.values || [];
+    const user = rows.find(r => r[2] && r[2].toLowerCase() === email.toLowerCase());
+    if (user) {
+      CURRENT_USER = {
+        id: user[0], name: user[1], email: user[2], role: user[3],
+        branches: (user[4]||'').split('|'), primaryBranch: user[5],
+        approverEmail: user[6], active: user[7]
+      };
+    } else {
+      // New user — create with Requestor role
+      CURRENT_USER = {
+        id: 'U' + Date.now(), name: CURRENT_PROFILE.name,
+        email: email, role: 'Requestor',
+        branches: ['Unassigned'], primaryBranch: 'Unassigned',
+        approverEmail: '', active: 'TRUE'
+      };
+      await appendRow('Users', [
+        CURRENT_USER.id, CURRENT_USER.name, CURRENT_USER.email,
+        CURRENT_USER.role, 'Unassigned', 'Unassigned', '', 'TRUE',
+        new Date().toISOString(), 'Auto-created on first login'
+      ]);
+      toast('Welcome! Your account has been created. Contact an admin to assign your branch.', 'warn');
+    }
+  } catch(e) {
+    console.error('loadCurrentUser', e);
+    CURRENT_USER = {
+      id:'?', name: CURRENT_PROFILE.name, email: CURRENT_PROFILE.email,
+      role:'Requestor', branches:['Unknown'], primaryBranch:'Unknown',
+      approverEmail:'', active:'TRUE'
+    };
+  }
+}
+
+async function loadSettings() {
+  try {
+    const data = await sheetsGet('Settings!A2:C20');
+    const rows = data.values || [];
+    rows.forEach(r => {
+      if (r[0] === 'LEADERSHIP_THRESHOLD') CONFIG.LEADERSHIP_THRESHOLD = parseFloat(r[1])||400;
+    });
+  } catch(e) { console.warn('Could not load settings', e); }
+}
+
+function showApp() {
+  document.getElementById('login-screen').style.display = 'none';
+  document.getElementById('app-screen').style.display = '';
+  const initials = (CURRENT_USER.name||'??').split(' ').map(n=>n[0]).join('').slice(0,2).toUpperCase();
+  document.getElementById('user-initials').textContent = initials;
+  document.getElementById('user-name').textContent = CURRENT_USER.name;
+  document.getElementById('user-role').textContent = CURRENT_USER.role;
+  if (CURRENT_PROFILE && CURRENT_PROFILE.picture) {
+    const av = document.getElementById('user-av');
+    av.innerHTML = `<img src="${CURRENT_PROFILE.picture}" alt="avatar">`;
+  }
+  if (['Requestor','Branch Approver','Procurement Admin'].includes(CURRENT_USER.role)) {
+    document.getElementById('page-sub').textContent = CURRENT_USER.primaryBranch;
+  }
+  const showNewBtn = ['Requestor','Procurement Admin','Super Admin'].includes(CURRENT_USER.role);
+  document.getElementById('new-req-btn').style.display = showNewBtn ? '' : 'none';
+  renderNav();
+  navigate('dashboard');
+}
+
+function signOut() {
+  google.accounts.oauth2.revoke(ACCESS_TOKEN, () => {});
+  ACCESS_TOKEN = null;
+  CURRENT_USER = null;
+  CURRENT_PROFILE = null;
+  document.getElementById('app-screen').style.display = 'none';
+  document.getElementById('login-screen').style.display = '';
+}
+
+function showLoginError(msg) {
+  const el = document.getElementById('login-error');
+  el.textContent = msg;
+  el.style.display = '';
+  const btn = document.getElementById('google-signin-btn');
+  btn.innerHTML = 'Try again';
+  btn.disabled = false;
+}
+
+// ═══════════════════════════════════════════════════════════
+//  SHEETS API HELPERS
+// ═══════════════════════════════════════════════════════════
+const BASE = 'https://sheets.googleapis.com/v4/spreadsheets/';
+
+async function gFetch(url, opts={}) {
+  const res = await fetch(url, {
+    ...opts,
+    headers: { Authorization: 'Bearer ' + ACCESS_TOKEN, 'Content-Type': 'application/json', ...(opts.headers||{}) }
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(()=>({error:{message:res.statusText}}));
+    throw new Error((err.error && err.error.message) || res.statusText);
+  }
+  return res.json();
+}
+
+async function sheetsGet(range) {
+  return gFetch(`${BASE}${CONFIG.SHEET_ID}/values/${encodeURIComponent(range)}`);
+}
+
+async function sheetsAppend(range, values) {
+  return gFetch(
+    `${BASE}${CONFIG.SHEET_ID}/values/${encodeURIComponent(range)}:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`,
+    { method:'POST', body: JSON.stringify({ values }) }
+  );
+}
+
+async function sheetsUpdate(range, values) {
+  return gFetch(
+    `${BASE}${CONFIG.SHEET_ID}/values/${encodeURIComponent(range)}?valueInputOption=USER_ENTERED`,
+    { method:'PUT', body: JSON.stringify({ values }) }
+  );
+}
+
+async function appendRow(sheet, row) {
+  return sheetsAppend(`${sheet}!A1`, [row]);
+}
+
+function genID(prefix) {
+  return prefix + '-' + Math.random().toString(36).substr(2,6).toUpperCase();
+}
+
+// ═══════════════════════════════════════════════════════════
+//  GMAIL SEND HELPER
+// ═══════════════════════════════════════════════════════════
+async function sendEmail(to, subject, htmlBody) {
+  try {
+    const msg = [
+      'To: ' + to,
+      'Subject: ' + subject,
+      'MIME-Version: 1.0',
+      'Content-Type: text/html; charset=utf-8',
+      '',
+      htmlBody
+    ].join('\r\n');
+    const encoded = btoa(unescape(encodeURIComponent(msg)))
+      .replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
+    await gFetch('https://gmail.googleapis.com/gmail/v1/users/me/messages/send', {
+      method: 'POST',
+      body: JSON.stringify({ raw: encoded })
+    });
+    // Log to sheet
+    await appendRow('NotificationsLog', [
+      genID('LOG'), '', to, subject, new Date().toISOString(), 'email', 'sent'
+    ]);
+    return true;
+  } catch(e) {
+    console.warn('Email send failed:', e.message);
+    return false;
+  }
+}
+
+function emailTemplate(title, body, actionLabel, actionNote) {
+  return `
+  <div style="font-family:'Segoe UI',sans-serif;max-width:560px;margin:0 auto;background:#f4f5f7;padding:24px">
+    <div style="background:#0f1f3d;border-radius:10px 10px 0 0;padding:20px 24px">
+      <div style="font-size:18px;font-weight:700;color:#fff">Savard Group</div>
+      <div style="font-size:12px;color:rgba(255,255,255,.5);margin-top:2px;text-transform:uppercase;letter-spacing:.8px">Procurement Portal</div>
+    </div>
+    <div style="background:#fff;border-radius:0 0 10px 10px;padding:24px;border:1px solid #e2e4e9;border-top:none">
+      <h2 style="font-size:18px;font-weight:700;color:#1a1d23;margin-bottom:12px">${title}</h2>
+      ${body}
+      ${actionLabel ? `<div style="margin-top:20px;padding:12px 16px;background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;font-size:13px;color:#2563eb">${actionLabel}</div>` : ''}
+      ${actionNote ? `<p style="font-size:12px;color:#9ca3af;margin-top:16px">${actionNote}</p>` : ''}
+    </div>
+    <div style="text-align:center;font-size:11px;color:#9ca3af;margin-top:16px">
+      Savard Group Procurement Portal · Automated notification · Do not reply
+    </div>
+  </div>`;
+}
+
+// ═══════════════════════════════════════════════════════════
+//  DATA LAYER
+// ═══════════════════════════════════════════════════════════
+let _requests = [];
+let _items = [];
+let _approvals = [];
+let _users = [];
+let _branches = [];
+let _loading = false;
+
+async function loadAllData() {
+  showLoading('Loading data...');
+  try {
+    const [rRes, iRes, aRes, uRes, bRes] = await Promise.all([
+      sheetsGet('Requests!A2:T2000'),
+      sheetsGet('OrderItems!A2:V2000'),
+      sheetsGet('Approvals!A2:I2000'),
+      sheetsGet('Users!A2:J500'),
+      sheetsGet('Branches!A2:E100'),
+    ]);
+    _requests = parseRows(rRes.values||[], REQUEST_KEYS);
+    _items    = parseRows(iRes.values||[], ITEM_KEYS);
+    _approvals= parseRows(aRes.values||[], APPROVAL_KEYS);
+    _users    = parseRows(uRes.values||[], USER_KEYS);
+    _branches = parseRows(bRes.values||[], BRANCH_KEYS);
+  } catch(e) {
+    toast('Failed to load data: ' + e.message, 'err');
+  }
+  hideLoading();
+}
+
+const REQUEST_KEYS  = ['id','submittedAt','submitterName','submitterEmail','branch','corpDept','travelerName','travelerID','travelerEmail','travelerDOB','govIDLink','totalAmount','status','needsLeadership','customerName','customerPO','paymentMethod','customerBilled','eeDeduction','comments'];
+const ITEM_KEYS     = ['id','requestID','purchaseType','itemType','detail','departureDate','departureLocation','arrivalLocation','tripType','checkInDate','checkOutDate','guestName','guestDOB','cityOfStay','pickupLocation','dropoffLocation','preferredVendor','estimatedAmount','purchaseAmount','purchaseDate','confirmationDocLink','receiptFileLink'];
+const APPROVAL_KEYS = ['id','requestID','step','approverName','approverEmail','decision','decidedAt','note','notificationSent'];
+const USER_KEYS     = ['id','name','email','role','branches','primaryBranch','approverEmail','active','createdAt','notes'];
+const BRANCH_KEYS   = ['id','name','primaryApproverEmail','backupApproverEmail','active'];
+
+function parseRows(rows, keys) {
+  return rows.map(r => {
+    const obj = {};
+    keys.forEach((k,i) => obj[k] = r[i]||'');
+    return obj;
+  }).filter(r => r[keys[0]]);
+}
+
+function getRequestItems(reqID) { return _items.filter(i => i.requestID === reqID); }
+function getRequestApprovals(reqID) { return _approvals.filter(a => a.requestID === reqID); }
+function getApproverForBranch(branchName) {
+  const b = _branches.find(b => b.name === branchName && b.active==='TRUE');
+  return b ? b.primaryApproverEmail : '';
+}
+function getMyRequests() {
+  if (['Requestor'].includes(CURRENT_USER.role))
+    return _requests.filter(r => r.submitterEmail === CURRENT_USER.email);
+  if (CURRENT_USER.role === 'Branch Approver')
+    return _requests.filter(r => CURRENT_USER.branches.includes(r.branch));
+  return _requests;
+}
+function getPendingApprovals() {
+  return _requests.filter(r => {
+    if (r.status === 'Pending Approval') {
+      const approverEmail = getApproverForBranch(r.branch);
+      return approverEmail === CURRENT_USER.email || CURRENT_USER.branches.includes(r.branch);
+    }
+    return false;
+  });
+}
+function getLeadershipQueue() {
+  return _requests.filter(r => r.status === 'Leadership Approval');
+}
+function getProcurementQueue() {
+  return _requests.filter(r => r.status === 'Ready to Book');
+}
+
+// ═══════════════════════════════════════════════════════════
+//  NAVIGATION
+// ═══════════════════════════════════════════════════════════
+let currentPage = 'dashboard';
+const PAGES = {
+  dashboard:            { title:'Dashboard', sub:'Overview & activity' },
+  'my-requests':        { title:'My Requests', sub:'Requests you have submitted' },
+  'new-request':        { title:'New Request', sub:'Submit a procurement request' },
+  'pending-approvals':  { title:'Pending Approvals', sub:'Requests awaiting your review' },
+  queue:                { title:'Procurement Queue', sub:'Approved requests ready to book' },
+  'all-requests':       { title:'All Requests', sub:'Full request history' },
+  'leadership-approvals':{ title:'Leadership Approvals', sub:'High-value requests awaiting sign-off' },
+  users:                { title:'User Management', sub:'Manage users, roles & branch assignments' },
+  'approval-rules':     { title:'Approval Rules', sub:'Configure workflow and routing' },
+  reports:              { title:'Reports & Spend', sub:'Analytics across all branches' },
+};
+const NAV_ICONS = {
+  dashboard:'ti-layout-dashboard','my-requests':'ti-file-text','new-request':'ti-circle-plus',
+  'pending-approvals':'ti-clipboard-check',queue:'ti-stack-2','all-requests':'ti-files',
+  'leadership-approvals':'ti-crown',users:'ti-users','approval-rules':'ti-git-branch',reports:'ti-chart-bar',
+};
+const ROLE_NAV = {
+  Requestor:         [null,['dashboard','my-requests','new-request']],
+  'Branch Approver': [null,['dashboard'],['Approvals',['pending-approvals']],['Requests',['my-requests']]],
+  'Procurement Admin':[null,['dashboard'],['Booking',['queue']],['Requests',['new-request','all-requests']]],
+  Leadership:        [null,['dashboard'],['Approvals',['leadership-approvals']],['Requests',['all-requests']]],
+  Finance:           [null,['dashboard'],['Data',['all-requests','reports']]],
+  'Super Admin':     [null,['dashboard'],['Operations',['all-requests']],['Administration',['users','approval-rules','reports']]],
+};
+
+function renderNav() {
+  const nav = document.getElementById('sidebar-nav');
+  nav.innerHTML = '';
+  const sections = ROLE_NAV[CURRENT_USER.role] || ROLE_NAV['Requestor'];
+  // Count badges
+  const badges = {};
+  if (CURRENT_USER.role==='Branch Approver') badges['pending-approvals'] = getPendingApprovals().length||0;
+  if (CURRENT_USER.role==='Procurement Admin') badges['queue'] = getProcurementQueue().length||0;
+  if (CURRENT_USER.role==='Leadership') badges['leadership-approvals'] = getLeadershipQueue().length||0;
+
+  sections.forEach(s => {
+    if (!s) return;
+    if (typeof s === 'string') {
+      // single item
+      appendNavItem(nav, s, badges[s]);
+    } else if (Array.isArray(s) && typeof s[0]==='string' && Array.isArray(s[1])) {
+      const lbl = document.createElement('div');
+      lbl.className = 'ns';
+      lbl.textContent = s[0];
+      nav.appendChild(lbl);
+      s[1].forEach(k => appendNavItem(nav, k, badges[k]));
+    } else if (Array.isArray(s)) {
+      s.forEach(k => typeof k==='string' && appendNavItem(nav, k, badges[k]));
+    }
+  });
+}
+
+function appendNavItem(nav, key, badge) {
+  const item = document.createElement('div');
+  item.className = 'ni' + (currentPage===key?' act':'');
+  const b = badge && badge>0 ? `<span class="nb">${badge}</span>` : '';
+  item.innerHTML = `<i class="ti ${NAV_ICONS[key]}"></i><span>${PAGES[key].title}</span>${b}`;
+  item.onclick = () => navigate(key);
+  nav.appendChild(item);
+}
+
+async function navigate(page) {
+  currentPage = page;
+  document.getElementById('page-title').textContent = PAGES[page]?.title || page;
+  document.getElementById('page-sub').textContent = PAGES[page]?.sub || '';
+  renderNav();
+  showLoading('Loading...');
+  await loadAllData();
+  renderPage();
+  hideLoading();
+}
+
+function renderPage() {
+  const c = document.getElementById('main-content');
+  switch(currentPage) {
+    case 'dashboard': c.innerHTML = renderDashboard(); break;
+    case 'my-requests': c.innerHTML = renderRequestTable(getMyRequests(), 'My Requests'); break;
+    case 'pending-approvals': c.innerHTML = renderPendingApprovals(); break;
+    case 'all-requests': c.innerHTML = renderRequestTable(_requests, 'All Requests'); break;
+    case 'queue': c.innerHTML = renderQueue(); break;
+    case 'leadership-approvals': c.innerHTML = renderLeadershipApprovals(); break;
+    case 'users': c.innerHTML = renderUsers(); break;
+    case 'approval-rules': c.innerHTML = renderApprovalRules(); break;
+    case 'reports': c.innerHTML = renderReports(); break;
+    default: c.innerHTML = '<div class="empty"><i class="ti ti-construction"></i><p>Coming soon</p></div>';
+  }
+}
+
+// ═══════════════════════════════════════════════════════════
+//  RENDER HELPERS
+// ═══════════════════════════════════════════════════════════
+function statusBadge(s) {
+  const m = {'Open':'b-gray','Pending Approval':'b-warn','Leadership Approval':'b-pur','Ready to Book':'b-info','Completed':'b-ok','Rejected':'b-err'};
+  return `<span class="bdg ${m[s]||'b-gray'}">${s}</span>`;
+}
+function typeIcon(t) {
+  return {Flight:'ti-plane',Hotel:'ti-building','Car Rental':'ti-car',Bus:'ti-bus'}[t]||'ti-package';
+}
+function fmtAmt(n) {
+  const v = parseFloat(n)||0;
+  return '$'+v.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g,',');
+}
+function fmtDate(d) {
+  if (!d) return '—';
+  const dt = new Date(d);
+  return isNaN(dt)?d:dt.toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'});
+}
+
+function renderRequestTable(reqs, title) {
+  if (!reqs.length) return `<div class="empty"><i class="ti ti-files"></i><p>No requests found.</p></div>`;
+  const rows = reqs.map(r => {
+    const items = getRequestItems(r.id);
+    const typeChips = items.map(i=>`<span class="tc"><i class="ti ${typeIcon(i.itemType)}" aria-hidden="true"></i>${i.itemType}</span>`).join(' ');
+    const total = parseFloat(r.totalAmount)||0;
+    const over = total >= CONFIG.LEADERSHIP_THRESHOLD;
+    return `<tr class="cr" onclick="openRequestDetail('${r.id}')">
+      <td><span style="font-weight:600;color:var(--navy)">${r.id}</span></td>
+      <td>${r.submitterName}</td>
+      <td><span class="bdg b-navy">${r.branch||'—'}</span></td>
+      <td>${typeChips||'—'}</td>
+      <td><span class="amt${over?' over':''}">${fmtAmt(total)}</span>${over?` <span class="pf-flag"><i class="ti ti-alert-triangle" style="font-size:11px"></i></span>`:''}</td>
+      <td>${statusBadge(r.status)}</td>
+      <td style="font-size:12px;color:var(--muted)">${fmtDate(r.submittedAt)}</td>
+    </tr>`;
+  }).join('');
+  return `<div class="tw">
+    <div class="th-row">
+      <span class="tt">${title}</span>
+      <div class="sb-box"><i class="ti ti-search" style="color:var(--muted);font-size:15px"></i><input placeholder="Search..." oninput="filterTable(this)"/></div>
+      <select class="fs" onchange="filterTable(this)">
+        <option>All Statuses</option>
+        <option>Open</option><option>Pending Approval</option><option>Leadership Approval</option>
+        <option>Ready to Book</option><option>Completed</option><option>Rejected</option>
+      </select>
+    </div>
+    <table id="req-table">
+      <thead><tr><th>ID</th><th>Submitted By</th><th>Branch</th><th>Types</th><th>Total</th><th>Status</th><th>Date</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table>
+  </div>`;
+}
+
+function renderDashboard() {
+  const total = _requests.length;
+  const pending = _requests.filter(r=>r.status==='Pending Approval'||r.status==='Open').length;
+  const completed = _requests.filter(r=>r.status==='Completed').length;
+  const spend = _requests.reduce((s,r)=>s+(parseFloat(r.totalAmount)||0),0);
+
+  const recentRows = _requests.slice(-10).reverse().map(r => {
+    const total = parseFloat(r.totalAmount)||0;
+    return `<tr class="cr" onclick="openRequestDetail('${r.id}')">
+      <td><span style="font-weight:600;color:var(--navy)">${r.id}</span></td>
+      <td>${r.submitterName}</td>
+      <td><span class="bdg b-navy">${r.branch||'—'}</span></td>
+      <td><span class="amt${total>=CONFIG.LEADERSHIP_THRESHOLD?' over':''}">${fmtAmt(total)}</span></td>
+      <td>${statusBadge(r.status)}</td>
+      <td style="font-size:12px;color:var(--muted)">${fmtDate(r.submittedAt)}</td>
+    </tr>`;
+  }).join('');
+
+  return `
+  <div class="sg">
+    <div class="sc acc"><div class="sl"><i class="ti ti-files" style="font-size:14px"></i>Total Requests</div><div class="sv">${total}</div></div>
+    <div class="sc"><div class="sl"><i class="ti ti-clock" style="font-size:14px"></i>Pending Action</div><div class="sv">${pending}</div></div>
+    <div class="sc"><div class="sl"><i class="ti ti-circle-check" style="font-size:14px"></i>Completed</div><div class="sv">${completed}</div></div>
+    <div class="sc"><div class="sl"><i class="ti ti-currency-dollar" style="font-size:14px"></i>Total Spend</div><div class="sv">${fmtAmt(spend)}</div></div>
+    <div class="sc"><div class="sl"><i class="ti ti-alert-triangle" style="font-size:14px"></i>Threshold</div><div class="sv">$${CONFIG.LEADERSHIP_THRESHOLD}</div><div class="ss">Leadership approval limit</div></div>
+  </div>
+  <div class="tw">
+    <div class="th-row"><span class="tt">Recent Requests</span><button class="btn btn-outline btn-sm" onclick="navigate('all-requests')">View all</button></div>
+    <table><thead><tr><th>ID</th><th>Submitted By</th><th>Branch</th><th>Total</th><th>Status</th><th>Date</th></tr></thead>
+    <tbody>${recentRows||'<tr><td colspan="6" style="text-align:center;color:var(--muted);padding:30px">No requests yet</td></tr>'}</tbody></table>
+  </div>`;
+}
+
+function renderPendingApprovals() {
+  const pending = getPendingApprovals();
+  if (!pending.length) return `<div class="empty"><i class="ti ti-clipboard-check"></i><p>No requests pending your approval.</p></div>`;
+  const rows = pending.map(r => {
+    const total = parseFloat(r.totalAmount)||0;
+    const over = total >= CONFIG.LEADERSHIP_THRESHOLD;
+    return `<tr class="cr" onclick="openRequestDetail('${r.id}')">
+      <td><span style="font-weight:600;color:var(--navy)">${r.id}</span></td>
+      <td>${r.submitterName}</td>
+      <td><span class="bdg b-navy">${r.branch}</span></td>
+      <td>${r.travelerName}</td>
+      <td><span class="amt${over?' over':''}">${fmtAmt(total)}</span>${over?` <span class="pf-flag"><i class="ti ti-alert-triangle" style="font-size:11px"></i>$${CONFIG.LEADERSHIP_THRESHOLD}+</span>`:''}</td>
+      <td style="font-size:12px;color:var(--muted)">${fmtDate(r.submittedAt)}</td>
+      <td>
+        <div style="display:flex;gap:6px">
+          <button class="btn btn-ok btn-sm" onclick="event.stopPropagation();approveRequest('${r.id}','approve')"><i class="ti ti-check"></i> Approve</button>
+          <button class="btn btn-err btn-sm" onclick="event.stopPropagation();approveRequest('${r.id}','reject')"><i class="ti ti-x"></i> Reject</button>
+        </div>
+      </td>
+    </tr>`;
+  }).join('');
+  return `<div class="tw">
+    <div class="th-row"><span class="tt">Pending Your Approval</span><span class="bdg b-warn">${pending.length} requests</span></div>
+    <table><thead><tr><th>ID</th><th>Submitted By</th><th>Branch</th><th>Traveler</th><th>Total</th><th>Date</th><th>Action</th></tr></thead>
+    <tbody>${rows}</tbody></table>
+  </div>`;
+}
+
+function renderQueue() {
+  const q = getProcurementQueue();
+  if (!q.length) return `<div class="empty"><i class="ti ti-stack-2"></i><p>No requests ready to book.</p></div>`;
+  const rows = q.map(r => {
+    const items = getRequestItems(r.id);
+    return `<tr>
+      <td><span style="font-weight:600;color:var(--navy)">${r.id}</span></td>
+      <td><span class="bdg b-navy">${r.branch}</span></td>
+      <td>${r.travelerName}</td>
+      <td>${items.map(i=>`<div class="tc"><i class="ti ${typeIcon(i.itemType)}" aria-hidden="true"></i>${i.detail||i.itemType}</div>`).join('')}</td>
+      <td><span class="amt">${fmtAmt(r.totalAmount)}</span></td>
+      <td style="font-size:12px;color:var(--muted)">${fmtDate(r.submittedAt)}</td>
+      <td>
+        <div style="display:flex;gap:6px">
+          <button class="btn btn-primary btn-sm" onclick="openBookingPanel('${r.id}')"><i class="ti ti-check"></i> Mark Booked</button>
+          <button class="btn btn-outline btn-sm" onclick="openRequestDetail('${r.id}')">Details</button>
+        </div>
+      </td>
+    </tr>`;
+  }).join('');
+  return `<div class="tw">
+    <div class="th-row"><span class="tt">Ready to Book</span><span class="bdg b-info">${q.length} requests</span></div>
+    <table><thead><tr><th>ID</th><th>Branch</th><th>Traveler</th><th>Items</th><th>Total</th><th>Submitted</th><th>Action</th></tr></thead>
+    <tbody>${rows}</tbody></table>
+  </div>`;
+}
+
+function renderLeadershipApprovals() {
+  const la = getLeadershipQueue();
+  if (!la.length) return `<div class="empty"><i class="ti ti-crown"></i><p>No high-value requests awaiting approval.</p></div>`;
+  return `
+  <div class="infobox warn" style="margin-bottom:20px">
+    <i class="ti ti-alert-triangle" style="font-size:20px;flex-shrink:0"></i>
+    <div><strong>High-Value Requests</strong> — These exceed the $${CONFIG.LEADERSHIP_THRESHOLD} threshold and require Leadership approval before procurement can book.</div>
+  </div>
+  ${la.map(r => {
+    const items = getRequestItems(r.id);
+    return `<div class="tw" style="margin-bottom:16px;padding:18px">
+      <div style="display:flex;align-items:center;gap:12px;margin-bottom:14px">
+        <span style="font-size:16px;font-weight:700;color:var(--navy)">${r.id}</span>
+        ${statusBadge(r.status)}
+        <span class="pf-flag"><i class="ti ti-alert-triangle" style="font-size:11px"></i>${fmtAmt(r.totalAmount)}</span>
+        <span style="margin-left:auto;font-size:12px;color:var(--muted)">${fmtDate(r.submittedAt)} · ${r.branch}</span>
+      </div>
+      <div class="dg" style="margin-bottom:14px">
+        <div><div class="dl">Submitted by</div><div class="dv">${r.submitterName}</div></div>
+        <div><div class="dl">Traveler</div><div class="dv">${r.travelerName}</div></div>
+        <div><div class="dl">Branch Approver</div><div class="dv">${r.branch} <span class="bdg b-ok" style="font-size:10px">Approved</span></div></div>
+        <div><div class="dl">Total</div><div class="dv amt over" style="font-size:16px">${fmtAmt(r.totalAmount)}</div></div>
+      </div>
+      <table style="width:100%;font-size:13px;margin-bottom:14px">
+        <thead><tr><th style="background:none;font-size:11px;padding:4px 0">Type</th><th style="background:none;font-size:11px;padding:4px 0">Detail</th><th style="background:none;font-size:11px;padding:4px 0;text-align:right">Amount</th></tr></thead>
+        <tbody>${items.map(i=>`
+          <tr><td style="padding:5px 0"><span class="tc"><i class="ti ${typeIcon(i.itemType)}" aria-hidden="true"></i>${i.itemType}</span></td>
+          <td style="padding:5px 0;color:var(--muted)">${i.detail||'—'}</td>
+          <td style="padding:5px 0;text-align:right;font-weight:600">${fmtAmt(i.estimatedAmount)}</td></tr>`).join('')}
+        </tbody>
+      </table>
+      <div style="display:flex;gap:8px;border-top:1px solid var(--border);padding-top:12px">
+        <button class="btn btn-ok" onclick="leadershipDecision('${r.id}','approve')"><i class="ti ti-check"></i> Approve</button>
+        <button class="btn btn-err" onclick="leadershipDecision('${r.id}','reject')"><i class="ti ti-x"></i> Reject</button>
+        <button class="btn btn-outline" onclick="openRequestDetail('${r.id}')"><i class="ti ti-eye"></i> Full Detail</button>
+      </div>
+    </div>`;
+  }).join('')}`;
+}
+
+function renderUsers() {
+  return `
+  <div class="sh"><h3>All Users</h3><button class="btn btn-primary" onclick="openAddUser()"><i class="ti ti-plus"></i> Add User</button></div>
+  <div class="tw">
+    <div class="th-row">
+      <div class="sb-box"><i class="ti ti-search" style="color:var(--muted);font-size:15px"></i><input placeholder="Search users..." /></div>
+      <select class="fs"><option>All Roles</option><option>Requestor</option><option>Branch Approver</option><option>Procurement Admin</option><option>Leadership</option><option>Finance</option><option>Super Admin</option></select>
+    </div>
+    ${_users.map(u=>`
+    <div class="ur-row">
+      <div class="ur-av">${(u.name||'?').split(' ').map(n=>n[0]).join('').slice(0,2).toUpperCase()}</div>
+      <div class="ur-ud"><div class="un">${u.name}</div><div class="ub">${u.email}</div></div>
+      <div class="bt">${(u.branches||'').split('|').map(b=>`<span class="btag">${b}</span>`).join('')}</div>
+      <span class="bdg ${u.role==='Super Admin'?'b-pur':u.role==='Leadership'?'b-gold':u.role==='Finance'?'b-ok':u.role==='Procurement Admin'?'b-info':u.role==='Branch Approver'?'b-warn':'b-gray'}" style="margin-left:8px">${u.role}</span>
+      <div style="margin-left:auto;display:flex;gap:6px">
+        <button class="btn btn-outline btn-sm" onclick="openEditUser('${u.email}')"><i class="ti ti-edit"></i> Edit</button>
+      </div>
+    </div>`).join('')}
+  </div>`;
+}
+
+function renderApprovalRules() {
+  return `<div class="two-col">
+    <div>
+      <div class="sh"><h3>Approval Workflow</h3></div>
+      <div class="tw" style="padding:20px">
+        <div class="tl">
+          ${[
+            {d:'done',t:'Step 1 — Requestor Submits',m:'Request created with all required details'},
+            {d:'done',t:'Step 2 — Branch / Dept Approver',m:'Assigned approver reviews and decides'},
+            {d:'act',t:'Step 3 — Procurement Admin Review',m:'Checks threshold, sends to Leadership if ≥ $'+CONFIG.LEADERSHIP_THRESHOLD},
+            {d:'act',t:'Step 4 — Leadership Approval (if ≥ threshold)',m:'Triggered automatically when total meets threshold'},
+            {d:'pend',t:'Step 5 — Procurement Books',m:'Confirms booking, uploads documents, notifies requestor'},
+          ].map((s,i,arr)=>`<div class="tli">
+            <div class="tll">
+              <div class="tld ${s.d}"><i class="ti ${s.d==='done'?'ti-check':s.d==='act'?'ti-clock':'ti-point'}" style="font-size:13px"></i></div>
+              ${i<arr.length-1?`<div class="tline ${s.d==='done'?'done':''}"></div>`:''}
+            </div>
+            <div class="tlc"><div class="tlt">${s.t}</div><div class="tlm">${s.m}</div></div>
+          </div>`).join('')}
+        </div>
+      </div>
+    </div>
+    <div>
+      <div class="sh"><h3>Threshold Settings</h3></div>
+      <div class="tw" style="padding:20px;margin-bottom:16px">
+        <div class="fg" style="margin-bottom:16px">
+          <label>Leadership Approval Threshold (USD)</label>
+          <div style="display:flex;align-items:center;gap:10px">
+            <input type="number" id="threshold-input" value="${CONFIG.LEADERSHIP_THRESHOLD}" style="width:120px;font-size:16px;font-weight:700"/>
+            <span style="color:var(--muted);font-size:12px">Requests at or above this amount require Leadership approval</span>
+          </div>
+        </div>
+        <div class="fg" style="margin-bottom:16px">
+          <label>Auto-escalation after (days without action)</label>
+          <input type="number" value="3" style="width:80px"/>
+        </div>
+        <button class="btn btn-primary btn-sm" onclick="saveThreshold()"><i class="ti ti-device-floppy"></i> Save Settings</button>
+      </div>
+      <div class="sh"><h3>Branch → Approver Assignments</h3><button class="btn btn-outline btn-sm" onclick="openAddBranch()"><i class="ti ti-plus"></i> Add</button></div>
+      <div class="tw">
+        ${_branches.filter(b=>b.active==='TRUE').map(b=>`
+        <div style="padding:10px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:12px;font-size:13px">
+          <span class="btag">${b.name}</span>
+          <span style="flex:1">${b.primaryApproverEmail||'—'}</span>
+          <span style="color:var(--muted);font-size:12px">Backup: ${b.backupApproverEmail||'—'}</span>
+          <button class="btn btn-outline btn-sm"><i class="ti ti-edit"></i></button>
+        </div>`).join('')}
+      </div>
+    </div>
+  </div>`;
+}
+
+function renderReports() {
+  const byBranch = {};
+  _requests.forEach(r => {
+    byBranch[r.branch] = (byBranch[r.branch]||0) + (parseFloat(r.totalAmount)||0);
+  });
+  const sorted = Object.entries(byBranch).sort((a,b)=>b[1]-a[1]);
+  const max = sorted[0]?.[1]||1;
+  const totalSpend = _requests.reduce((s,r)=>s+(parseFloat(r.totalAmount)||0),0);
+  const byType = {Flight:0,Hotel:0,'Car Rental':0,Bus:0};
+  _items.forEach(i=>{ if(byType[i.itemType]!==undefined) byType[i.itemType]+=(parseFloat(i.estimatedAmount)||0); });
+
+  return `
+  <div class="sg">
+    <div class="sc acc"><div class="sl">Total Spend</div><div class="sv">${fmtAmt(totalSpend)}</div></div>
+    <div class="sc"><div class="sl">Flights</div><div class="sv">${fmtAmt(byType.Flight)}</div></div>
+    <div class="sc"><div class="sl">Hotels</div><div class="sv">${fmtAmt(byType.Hotel)}</div></div>
+    <div class="sc"><div class="sl">Car Rentals</div><div class="sv">${fmtAmt(byType['Car Rental'])}</div></div>
+    <div class="sc"><div class="sl">Total Requests</div><div class="sv">${_requests.length}</div></div>
+  </div>
+  <div class="two-col">
+    <div>
+      <div class="sh"><h3>Spend by Branch</h3></div>
+      <div class="tw" style="padding:20px">
+        ${sorted.slice(0,10).map(([b,v])=>`
+        <div style="margin-bottom:14px">
+          <div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:4px">
+            <span>${b||'Unknown'}</span><span style="font-weight:700">${fmtAmt(v)}</span>
+          </div>
+          <div style="height:6px;background:var(--border);border-radius:3px;overflow:hidden">
+            <div style="height:100%;background:var(--navy);width:${Math.round(v/max*100)}%;border-radius:3px"></div>
+          </div>
+        </div>`).join('') || '<p style="color:var(--muted);font-size:13px">No data yet</p>'}
+      </div>
+    </div>
+    <div>
+      <div class="sh"><h3>Request Status Breakdown</h3></div>
+      <div class="tw" style="padding:20px">
+        ${['Open','Pending Approval','Leadership Approval','Ready to Book','Completed','Rejected'].map(s=>{
+          const count = _requests.filter(r=>r.status===s).length;
+          return `<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border);font-size:13px">
+            ${statusBadge(s)}<span style="font-weight:700">${count}</span></div>`;
+        }).join('')}
+      </div>
+    </div>
+  </div>`;
+}
+
+// ═══════════════════════════════════════════════════════════
+//  ACTIONS
+// ═══════════════════════════════════════════════════════════
+async function submitRequest(formData) {
+  const reqID = genID('R');
+  const total = formData.items.reduce((s,i)=>s+(parseFloat(i.amount)||0),0);
+  const needsLeadership = total >= CONFIG.LEADERSHIP_THRESHOLD;
+
+  // Write Request row
+  await appendRow('Requests', [
+    reqID, new Date().toISOString(), CURRENT_USER.name, CURRENT_USER.email,
+    formData.branch, formData.corpDept, formData.travelerName, formData.travelerID,
+    formData.travelerEmail, formData.travelerDOB, formData.govIDLink,
+    total.toFixed(2), 'Pending Approval', needsLeadership?'YES':'NO',
+    formData.customerName, formData.customerPO, formData.paymentMethod,
+    formData.customerBilled, formData.eeDeduction, formData.comments
+  ]);
+
+  // Write each item
+  for (const item of formData.items) {
+    await appendRow('OrderItems', [
+      genID('I'), reqID, item.type, item.type, item.detail||'',
+      item.departureDate||'', item.departureLocation||'', item.arrivalLocation||'',
+      item.tripType||'', item.checkIn||'', item.checkOut||'',
+      item.guestName||formData.travelerName, item.guestDOB||formData.travelerDOB,
+      item.cityOfStay||'', item.pickupLocation||'', item.dropoffLocation||'',
+      item.vendor||'', item.amount||0, '', '', '', ''
+    ]);
+  }
+
+  // Write approval record (step 1 pending)
+  const approverEmail = getApproverForBranch(formData.branch) || formData.approverEmail || '';
+  await appendRow('Approvals', [
+    genID('APV'), reqID, 'Branch Approver', '', approverEmail,
+    'Pending', new Date().toISOString(), '', 'FALSE'
+  ]);
+
+  // Send email to approver
+  if (approverEmail) {
+    const approverUser = _users.find(u=>u.email===approverEmail);
+    const approverName = approverUser ? approverUser.name : 'Branch Approver';
+    await sendEmail(
+      approverEmail,
+      `[Action Required] New Procurement Request ${reqID} — ${formData.travelerName}`,
+      emailTemplate(
+        `New Request Needs Your Approval`,
+        `<p style="font-size:14px;color:#374151;margin-bottom:12px">Hi ${approverName},</p>
+         <p style="font-size:14px;color:#374151;margin-bottom:16px"><strong>${CURRENT_USER.name}</strong> submitted a procurement request for <strong>${formData.travelerName}</strong> in <strong>${formData.branch}</strong>.</p>
+         <table style="width:100%;border-collapse:collapse;font-size:13px;margin-bottom:16px">
+           <tr><td style="padding:6px 0;color:#6b7280">Request ID</td><td style="font-weight:600">${reqID}</td></tr>
+           <tr><td style="padding:6px 0;color:#6b7280">Total Amount</td><td style="font-weight:700;color:${needsLeadership?'#d97706':'#059669'}">${fmtAmt(total)}${needsLeadership?' ⚠ Leadership approval also required':''}</td></tr>
+           <tr><td style="padding:6px 0;color:#6b7280">Items</td><td>${formData.items.map(i=>i.type).join(', ')}</td></tr>
+         </table>`,
+        `Log in to the Procurement Portal to review and approve or reject this request.`,
+        `This is an automated notification from the Savard Group Procurement Portal.`
+      )
+    );
+  }
+
+  toast(`Request ${reqID} submitted! Your approver has been notified.`, 'ok');
+  closePanel();
+  await navigate('my-requests');
+}
+
+async function approveRequest(reqID, decision) {
+  const req = _requests.find(r=>r.id===reqID);
+  if (!req) return;
+  const total = parseFloat(req.totalAmount)||0;
+  const needsLeadership = total >= CONFIG.LEADERSHIP_THRESHOLD;
+
+  let newStatus, nextEmail, nextName, emailSubject, emailBody;
+
+  if (decision==='approve') {
+    if (needsLeadership) {
+      newStatus = 'Leadership Approval';
+      nextEmail = _users.find(u=>u.role==='Leadership')?.email || '';
+      nextName = _users.find(u=>u.role==='Leadership')?.name || 'Leadership';
+      emailSubject = `[Leadership Approval Required] Request ${reqID} — ${fmtAmt(total)}`;
+      emailBody = emailTemplate(
+        `Leadership Approval Required`,
+        `<p style="font-size:14px;color:#374151;margin-bottom:12px">Hi ${nextName},</p>
+         <p style="font-size:14px;color:#374151;margin-bottom:16px">Request <strong>${reqID}</strong> for <strong>${req.travelerName}</strong> totaling <strong style="color:#d97706">${fmtAmt(total)}</strong> has been approved by the branch approver and now requires your leadership approval.</p>`,
+        `Log in to the Procurement Portal to review this high-value request.`,null
+      );
+    } else {
+      newStatus = 'Ready to Book';
+      nextEmail = _users.find(u=>u.role==='Procurement Admin')?.email || '';
+      nextName = _users.find(u=>u.role==='Procurement Admin')?.name || 'Procurement';
+      emailSubject = `[Ready to Book] Request ${reqID} approved — ${req.travelerName}`;
+      emailBody = emailTemplate(
+        `Request Approved — Ready to Book`,
+        `<p style="font-size:14px;color:#374151;margin-bottom:16px">Request <strong>${reqID}</strong> for <strong>${req.travelerName}</strong> (${req.branch}) has been approved and is ready for booking. Total: <strong>${fmtAmt(total)}</strong></p>`,
+        `Log in to the Procurement Portal to proceed with booking.`,null
+      );
+    }
+  } else {
+    newStatus = 'Rejected';
+    nextEmail = req.submitterEmail;
+    emailSubject = `[Rejected] Procurement Request ${reqID}`;
+    emailBody = emailTemplate(
+      `Your Request Was Not Approved`,
+      `<p style="font-size:14px;color:#374151;margin-bottom:16px">Request <strong>${reqID}</strong> for <strong>${req.travelerName}</strong> has been rejected by your branch approver. Please contact your approver for more information.</p>`,
+      null, null
+    );
+  }
+
+  // Update status in sheet — find row
+  await updateRequestStatus(reqID, newStatus);
+
+  // Log approval
+  await appendRow('Approvals', [
+    genID('APV'), reqID, 'Branch Approver', CURRENT_USER.name, CURRENT_USER.email,
+    decision==='approve'?'Approved':'Rejected', new Date().toISOString(), '', 'TRUE'
+  ]);
+
+  // Send email
+  if (nextEmail) await sendEmail(nextEmail, emailSubject, emailBody);
+
+  toast(decision==='approve' ? `Approved! Request moved to ${needsLeadership?'Leadership':'procurement queue'}.` : 'Rejected. Requestor has been notified.', decision==='approve'?'ok':'warn');
+  closePanel();
+  await navigate(currentPage);
+}
+
+async function leadershipDecision(reqID, decision) {
+  const req = _requests.find(r=>r.id===reqID);
+  if (!req) return;
+  let newStatus, emailTo, emailSubj, emailBody;
+
+  if (decision==='approve') {
+    newStatus = 'Ready to Book';
+    emailTo = _users.find(u=>u.role==='Procurement Admin')?.email||'';
+    emailSubj = `[Ready to Book] Leadership Approved — ${reqID}`;
+    emailBody = emailTemplate('Leadership Approved — Ready to Book',
+      `<p style="font-size:14px;color:#374151">Request <strong>${reqID}</strong> for <strong>${req.travelerName}</strong> totaling <strong>${fmtAmt(req.totalAmount)}</strong> has received Leadership approval and is ready for booking.</p>`,
+      'Log in to the Procurement Portal to proceed.', null
+    );
+  } else {
+    newStatus = 'Rejected';
+    emailTo = req.submitterEmail;
+    emailSubj = `[Rejected] Procurement Request ${reqID}`;
+    emailBody = emailTemplate('Your Request Was Rejected by Leadership',
+      `<p style="font-size:14px;color:#374151">Request <strong>${reqID}</strong> for <strong>${req.travelerName}</strong> was not approved by Leadership.</p>`,
+      null, null
+    );
+  }
+
+  await updateRequestStatus(reqID, newStatus);
+  await appendRow('Approvals', [
+    genID('APV'), reqID, 'Leadership', CURRENT_USER.name, CURRENT_USER.email,
+    decision==='approve'?'Approved':'Rejected', new Date().toISOString(), '', 'TRUE'
+  ]);
+  if (emailTo) await sendEmail(emailTo, emailSubj, emailBody);
+
+  toast(decision==='approve'?'Leadership approved! Sent to procurement queue.':'Rejected. Requestor notified.', decision==='approve'?'ok':'warn');
+  closePanel();
+  await navigate(currentPage);
+}
+
+async function markBooked(reqID, confirmationLink, note) {
+  const req = _requests.find(r=>r.id===reqID);
+  if (!req) return;
+
+  await updateRequestStatus(reqID, 'Completed');
+  await appendRow('Approvals', [
+    genID('APV'), reqID, 'Procurement', CURRENT_USER.name, CURRENT_USER.email,
+    'Booked', new Date().toISOString(), note||'', 'TRUE'
+  ]);
+
+  // Send confirmation email to requestor
+  await sendEmail(
+    req.submitterEmail,
+    `[Booking Confirmed] Request ${reqID} — ${req.travelerName}`,
+    emailTemplate(
+      'Your Travel Has Been Booked!',
+      `<p style="font-size:14px;color:#374151;margin-bottom:12px">Hi ${req.submitterName},</p>
+       <p style="font-size:14px;color:#374151;margin-bottom:16px">Your procurement request <strong>${reqID}</strong> for <strong>${req.travelerName}</strong> has been booked and confirmed.</p>
+       ${confirmationLink?`<p style="font-size:13px;color:#2563eb;margin-bottom:8px"><a href="${confirmationLink}" style="color:#2563eb">View Confirmation Document →</a></p>`:''}
+       ${note?`<div style="background:#f9fafb;border-left:3px solid #d1d5db;padding:10px 14px;margin-top:12px;font-size:13px;color:#6b7280">Note from procurement: ${note}</div>`:''}`,
+      null,
+      `Request ID: ${reqID} · Total: ${fmtAmt(req.totalAmount)}`
+    )
+  );
+
+  toast('Marked as booked! Confirmation email sent to requestor.', 'ok');
+  closePanel();
+  await navigate('queue');
+}
+
+async function updateRequestStatus(reqID, newStatus) {
+  // Find row number in Requests sheet
+  const data = await sheetsGet('Requests!A:A');
+  const rows = data.values || [];
+  const rowIdx = rows.findIndex(r=>r[0]===reqID);
+  if (rowIdx === -1) { toast('Could not find request in sheet.','err'); return; }
+  const sheetRow = rowIdx + 1; // 1-indexed, row 1 is header
+  await sheetsUpdate(`Requests!M${sheetRow}`, [[newStatus]]);
+}
+
+async function saveThreshold() {
+  const val = parseFloat(document.getElementById('threshold-input').value)||400;
+  CONFIG.LEADERSHIP_THRESHOLD = val;
+  // Find settings row
+  const data = await sheetsGet('Settings!A:A');
+  const rows = data.values||[];
+  const idx = rows.findIndex(r=>r[0]==='LEADERSHIP_THRESHOLD');
+  if (idx>0) await sheetsUpdate(`Settings!B${idx+1}`, [[val.toString()]]);
+  toast('Threshold saved to $' + val, 'ok');
+}
+
+// ═══════════════════════════════════════════════════════════
+//  PANELS
+// ═══════════════════════════════════════════════════════════
+function closePanel() {
+  document.getElementById('overlays').innerHTML = '';
+  itemCount = 1;
+}
+
+function openRequestDetail(reqID) {
+  const req = _requests.find(r=>r.id===reqID);
+  if (!req) { toast('Request not found','err'); return; }
+  const items = getRequestItems(reqID);
+  const approvals = getRequestApprovals(reqID);
+  const total = parseFloat(req.totalAmount)||0;
+  const over = total >= CONFIG.LEADERSHIP_THRESHOLD;
+
+  const canApprove = CURRENT_USER.role==='Branch Approver' && req.status==='Pending Approval';
+  const canLeadership = CURRENT_USER.role==='Leadership' && req.status==='Leadership Approval';
+  const canBook = CURRENT_USER.role==='Procurement Admin' && req.status==='Ready to Book';
+
+  const tlSteps = [
+    {d:'done',t:'Submitted',m:`${req.submitterName} · ${fmtDate(req.submittedAt)}`},
+    {d:req.status==='Pending Approval'||req.status==='Open'?'act':req.status==='Rejected'&&approvals.find(a=>a.step==='Branch Approver'&&a.decision==='Rejected')?'rej':'done',
+     t:`Branch Approver — ${req.branch}`,m:req.status==='Pending Approval'?'Awaiting review':req.status==='Open'?'Awaiting submission':'Approved'},
+    {d:req.needsLeadership!=='YES'?'done':req.status==='Leadership Approval'?'act':req.status==='Ready to Book'||req.status==='Completed'?'done':'pend',
+     t:'Leadership Review',m:req.needsLeadership==='YES'?`Required — total ${fmtAmt(total)} ≥ $${CONFIG.LEADERSHIP_THRESHOLD}`:'Not required'},
+    {d:req.status==='Ready to Book'?'act':req.status==='Completed'?'done':'pend',
+     t:'Procurement Books',m:req.status==='Completed'?'Booked & confirmed':req.status==='Ready to Book'?'In queue':'Awaiting approvals'},
+  ];
+
+  const ov = document.getElementById('overlays');
+  ov.innerHTML = `
+  <div class="po" onclick="if(event.target===this)closePanel()">
+    <div class="panel">
+      <div class="ph">
+        <i class="ti ti-file-text" style="font-size:20px;color:var(--navy)"></i>
+        <h2>Request ${req.id}</h2>
+        ${statusBadge(req.status)}
+        ${over?`<span class="pf-flag"><i class="ti ti-alert-triangle" style="font-size:11px"></i>Leadership req.</span>`:''}
+        <button class="pc" onclick="closePanel()"><i class="ti ti-x" style="font-size:18px"></i></button>
+      </div>
+      <div class="pb">
+        <div class="fs-sec">
+          <div class="fs-title">Request Details</div>
+          <div class="dg">
+            <div><div class="dl">Submitted By</div><div class="dv">${req.submitterName}</div></div>
+            <div><div class="dl">Branch</div><div class="dv">${req.branch}</div></div>
+            <div><div class="dl">Traveler / EE</div><div class="dv">${req.travelerName} ${req.travelerID?'#'+req.travelerID:''}</div></div>
+            <div><div class="dl">Request Date</div><div class="dv">${fmtDate(req.submittedAt)}</div></div>
+          </div>
+        </div>
+
+        <div class="fs-sec">
+          <div class="fs-title">Items</div>
+          ${items.map(item=>`
+          <div class="ic">
+            <div class="ich">
+              <i class="ti ${typeIcon(item.itemType)}" style="font-size:18px;color:var(--navy)"></i>
+              <span class="itl">${item.itemType}</span>
+              <span style="margin-left:auto;font-weight:700;font-size:15px">${fmtAmt(item.estimatedAmount)}</span>
+            </div>
+            <div class="dg">
+              <div><div class="dl">Detail</div><div class="dv">${item.detail||'—'}</div></div>
+              ${item.itemType==='Flight'?`<div><div class="dl">Route</div><div class="dv">${item.departureLocation||'—'} → ${item.arrivalLocation||'—'} (${item.tripType||'One Way'})</div></div>`:''}
+              ${item.itemType==='Hotel'?`<div><div class="dl">Stay</div><div class="dv">${fmtDate(item.checkInDate)} → ${fmtDate(item.checkOutDate)}, ${item.cityOfStay||'—'}</div></div>`:''}
+              ${item.itemType==='Car Rental'?`<div><div class="dl">Pickup → Dropoff</div><div class="dv">${item.pickupLocation||'—'} → ${item.dropoffLocation||'—'}</div></div>`:''}
+            </div>
+          </div>`).join('')}
+          <div style="display:flex;justify-content:space-between;padding:10px 0;border-top:2px solid var(--border)">
+            <span style="font-weight:700">Total</span>
+            <span class="amt${over?' over':''}" style="font-size:16px">${fmtAmt(total)}</span>
+          </div>
+        </div>
+
+        <div class="fs-sec">
+          <div class="fs-title">Billing</div>
+          <div class="dg">
+            <div><div class="dl">Corp Dept</div><div class="dv">${req.corpDept||'—'}</div></div>
+            <div><div class="dl">Payment</div><div class="dv">${req.paymentMethod||'—'}</div></div>
+            <div><div class="dl">Customer Billed</div><div class="dv">${req.customerBilled||'NO'}</div></div>
+            <div><div class="dl">EE Deduction</div><div class="dv">${req.eeDeduction||'NO'}</div></div>
+            ${req.customerName?`<div><div class="dl">Customer</div><div class="dv">${req.customerName}</div></div>`:''}
+          </div>
+        </div>
+
+        ${req.govIDLink?`
+        <div class="fs-sec">
+          <div class="fs-title">Documents</div>
+          <div style="display:flex;flex-wrap:wrap;gap:8px">
+            <a class="dl-link" href="${req.govIDLink}" target="_blank"><i class="ti ti-id" style="font-size:12px"></i>Gov ID</a>
+            ${items.filter(i=>i.confirmationDocLink).map(i=>`<a class="dl-link" href="${i.confirmationDocLink}" target="_blank"><i class="ti ti-file-text" style="font-size:12px"></i>Confirmation</a>`).join('')}
+            ${items.filter(i=>i.receiptFileLink).map(i=>`<a class="dl-link" href="${i.receiptFileLink}" target="_blank"><i class="ti ti-receipt" style="font-size:12px"></i>Receipt</a>`).join('')}
+          </div>
+        </div>`:''}
+
+        <div class="fs-sec">
+          <div class="fs-title">Approval Timeline</div>
+          <div class="tl">
+            ${tlSteps.map((s,i,arr)=>`
+            <div class="tli">
+              <div class="tll">
+                <div class="tld ${s.d}"><i class="ti ${s.d==='done'?'ti-check':s.d==='act'?'ti-clock':s.d==='rej'?'ti-x':'ti-point'}" style="font-size:13px"></i></div>
+                ${i<arr.length-1?`<div class="tline ${s.d==='done'?'done':''}"></div>`:''}
+              </div>
+              <div class="tlc"><div class="tlt">${s.t}</div><div class="tlm">${s.m}</div></div>
+            </div>`).join('')}
+          </div>
+        </div>
+
+        ${req.comments?`
+        <div class="fs-sec">
+          <div class="fs-title">Comments</div>
+          <div style="font-size:13px;color:var(--muted);background:var(--bg);border-radius:7px;padding:10px 14px;border-left:3px solid var(--border)">${req.comments}</div>
+        </div>`:''}
+      </div>
+
+      ${canApprove?`
+      <div class="pf">
+        <textarea id="approval-note" placeholder="Add a note (optional)..." style="flex:1;border:1px solid var(--border);border-radius:7px;padding:8px 10px;font-size:13px;resize:none;height:38px;font-family:inherit;outline:none"></textarea>
+        <button class="btn btn-err" onclick="approveRequest('${req.id}','reject')"><i class="ti ti-x"></i> Reject</button>
+        <button class="btn btn-ok" onclick="approveRequest('${req.id}','approve')"><i class="ti ti-check"></i> Approve</button>
+      </div>`:
+      canLeadership?`
+      <div class="pf">
+        <button class="btn btn-err" onclick="leadershipDecision('${req.id}','reject')"><i class="ti ti-x"></i> Reject</button>
+        <button class="btn btn-ok" onclick="leadershipDecision('${req.id}','approve')"><i class="ti ti-check"></i> Approve</button>
+      </div>`:
+      canBook?`
+      <div class="pf">
+        <input id="conf-link" placeholder="Confirmation # or Google Drive link..." style="flex:1;border:1px solid var(--border);border-radius:7px;padding:8px 12px;font-size:13px;outline:none"/>
+        <button class="btn btn-primary" onclick="markBooked('${req.id}',document.getElementById('conf-link').value,'')"><i class="ti ti-check"></i> Mark Booked & Notify</button>
+      </div>`:`
+      <div class="pf"><button class="btn btn-outline" onclick="closePanel()">Close</button></div>`}
+    </div>
+  </div>`;
+}
+
+let itemCount = 1;
+
+function openNewRequest() {
+  const branches = _branches.filter(b=>b.active==='TRUE').map(b=>`<option>${b.name}</option>`).join('');
+  const ov = document.getElementById('overlays');
+  ov.innerHTML = `
+  <div class="po" onclick="if(event.target===this)closePanel()">
+    <div class="panel">
+      <div class="ph">
+        <i class="ti ti-circle-plus" style="font-size:20px;color:var(--navy)"></i>
+        <h2>New Procurement Request</h2>
+        <button class="pc" onclick="closePanel()"><i class="ti ti-x" style="font-size:18px"></i></button>
+      </div>
+      <div class="pb">
+        <div class="fs-sec">
+          <div class="fs-title">Request Info</div>
+          <div class="fr">
+            <div class="fg"><label>Branch / Department <span class="req">*</span></label>
+              <select id="nf-branch">${CURRENT_USER.branches.map(b=>`<option>${b}</option>`).join('')}${branches}</select></div>
+            <div class="fg"><label>Corp Dept</label>
+              <select id="nf-dept"><option>BRANCH</option><option>EXEC</option><option>SALES</option><option>SAFETY</option><option>STAPI</option><option>Corp</option><option>Site</option></select></div>
+          </div>
+          <div class="fr">
+            <div class="fg"><label>Requestor Name</label><input id="nf-reqname" value="${CURRENT_USER.name}" readonly style="background:var(--bg)"/></div>
+            <div class="fg"><label>Requestor Email</label><input id="nf-reqemail" value="${CURRENT_USER.email}" readonly style="background:var(--bg)"/></div>
+          </div>
+        </div>
+        <div class="fs-sec">
+          <div class="fs-title">Traveler / Employee</div>
+          <div class="fr">
+            <div class="fg"><label>Traveler Full Name <span class="req">*</span></label><input id="nf-travname" placeholder="Legal name as on ID"/></div>
+            <div class="fg"><label>Employee ID</label><input id="nf-travid" placeholder="EE ID if applicable"/></div>
+          </div>
+          <div class="fr">
+            <div class="fg"><label>Traveler Email</label><input id="nf-travemail" type="email" placeholder="For confirmation email"/></div>
+            <div class="fg"><label>Date of Birth</label><input id="nf-travdob" type="date"/></div>
+          </div>
+          <div class="fr full">
+            <div class="fg"><label>Gov ID (Google Drive Link)</label>
+              <input id="nf-govid" type="url" placeholder="https://drive.google.com/..."/>
+              <span class="hint">Upload Gov ID to Google Drive, set sharing to "Anyone with link", paste here</span></div>
+          </div>
+        </div>
+        <div class="fs-sec">
+          <div class="fs-title">Request Items</div>
+          <div id="items-container"></div>
+          <div class="air">
+            <button class="aib" onclick="addItem('Flight')"><i class="ti ti-plane"></i> Add Flight</button>
+            <button class="aib" onclick="addItem('Hotel')"><i class="ti ti-building"></i> Add Hotel</button>
+            <button class="aib" onclick="addItem('Car Rental')"><i class="ti ti-car"></i> Add Car Rental</button>
+            <button class="aib" onclick="addItem('Bus')"><i class="ti ti-bus"></i> Add Bus</button>
+          </div>
+        </div>
+        <div class="fs-sec">
+          <div class="fs-title">Billing & Deductions</div>
+          <div class="fr">
+            <div class="fg"><label>Payment Method</label>
+              <select id="nf-payment"><option>Card Payment</option><option>Invoiced</option><option>In Stock</option></select></div>
+            <div class="fg"><label>Customer Billed?</label><select id="nf-custbilled"><option>NO</option><option>YES</option></select></div>
+          </div>
+          <div class="fr">
+            <div class="fg"><label>Employee Deduction?</label>
+              <select id="nf-eeded" onchange="toggleEEDed()"><option>NO</option><option>YES</option></select></div>
+            <div class="fg" id="ded-type-grp" style="display:none"><label>Deduction Type</label>
+              <select id="nf-dedtype"><option>Housing - Hotel</option><option>Transportation Deduction</option><option>Travel Expense 1</option><option>Miscellaneous 1- NonTaxab</option><option>Advance</option></select></div>
+          </div>
+          <div class="fr" id="ded-freq-row" style="display:none">
+            <div class="fg"><label>Recurring?</label><select id="nf-recurring"><option>NO</option><option>YES</option></select></div>
+            <div class="fg"><label>Frequency</label><select id="nf-freq"><option>One Time</option><option>Daily</option><option>Weekly</option><option>Monthly</option></select></div>
+          </div>
+          <div class="fr">
+            <div class="fg"><label>Customer Name</label><input id="nf-custname" placeholder="If applicable"/></div>
+            <div class="fg"><label>Customer PO Number</label><input id="nf-custpo" placeholder="If applicable"/></div>
+          </div>
+        </div>
+        <div class="fs-sec">
+          <div class="fs-title">Comments</div>
+          <div class="fr full">
+            <div class="fg"><textarea id="nf-comments" placeholder="Special instructions, context, or notes for procurement..."></textarea></div>
+          </div>
+        </div>
+        <div class="infobox info" style="margin-bottom:8px">
+          <i class="ti ti-info-circle" style="font-size:16px;flex-shrink:0;margin-top:1px"></i>
+          <div>Request will go to your branch approver. If the total is ≥ <strong>$${CONFIG.LEADERSHIP_THRESHOLD}</strong>, it will also require Leadership approval before booking.</div>
+        </div>
+      </div>
+      <div class="pf">
+        <button class="btn btn-outline" onclick="closePanel()">Cancel</button>
+        <button class="btn btn-primary" onclick="collectAndSubmit()"><i class="ti ti-send"></i> Submit Request</button>
+      </div>
+    </div>
+  </div>`;
+  addItem('Flight'); // Add one default item
+}
+
+function addItem(type) {
+  const icons = {Flight:'ti-plane',Hotel:'ti-building','Car Rental':'ti-car',Bus:'ti-bus'};
+  const id = itemCount++;
+  let fields = '';
+  if (type==='Flight') fields = `
+    <div class="fr"><div class="fg"><label>Departure Airport <span class="req">*</span></label><input class="item-dep" placeholder="e.g. BTR (Baton Rouge)"/></div><div class="fg"><label>Arrival Airport <span class="req">*</span></label><input class="item-arr" placeholder="e.g. BGR (Bangor)"/></div></div>
+    <div class="fr"><div class="fg"><label>Departure Date</label><input type="date" class="item-depdate"/></div><div class="fg"><label>Trip Type</label><select class="item-triptype"><option>One Way</option><option>Round Trip</option></select></div></div>
+    <div class="fr"><div class="fg"><label>Preferred Airline / Site</label><input class="item-vendor" placeholder="Expedia, American Airlines..."/></div><div class="fg"><label>Estimated Amount ($) <span class="req">*</span></label><input type="number" class="item-amount" placeholder="0.00" min="0" step="0.01"/></div></div>`;
+  else if (type==='Hotel') fields = `
+    <div class="fr"><div class="fg"><label>Hotel Name <span class="req">*</span></label><input class="item-detail" placeholder="Hotel name or address"/></div><div class="fg"><label>City of Stay</label><input class="item-city" placeholder="City, State"/></div></div>
+    <div class="fr"><div class="fg"><label>Guest Full Name</label><input class="item-guestname" placeholder="Name as on booking"/></div><div class="fg"><label>Guest DOB</label><input type="date" class="item-guestdob"/></div></div>
+    <div class="fr"><div class="fg"><label>Check-in</label><input type="date" class="item-checkin"/></div><div class="fg"><label>Check-out</label><input type="date" class="item-checkout"/></div></div>
+    <div class="fr"><div class="fg"><label>Estimated Amount ($) <span class="req">*</span></label><input type="number" class="item-amount" placeholder="0.00" min="0" step="0.01"/></div></div>`;
+  else if (type==='Car Rental') fields = `
+    <div class="fr"><div class="fg"><label>Pickup Location <span class="req">*</span></label><input class="item-pickup" placeholder="City or address"/></div><div class="fg"><label>Drop-off Location</label><input class="item-dropoff" placeholder="City or address"/></div></div>
+    <div class="fr"><div class="fg"><label>Pickup Date</label><input type="date" class="item-depdate"/></div><div class="fg"><label>Drop-off Date</label><input type="date" class="item-checkout"/></div></div>
+    <div class="fr"><div class="fg"><label>Preferred Vendor</label><input class="item-vendor" placeholder="Enterprise, Hertz..."/></div><div class="fg"><label>Estimated Amount ($) <span class="req">*</span></label><input type="number" class="item-amount" placeholder="0.00" min="0" step="0.01"/></div></div>`;
+  else fields = `
+    <div class="fr"><div class="fg"><label>Departure City</label><input class="item-dep" placeholder="Origin"/></div><div class="fg"><label>Arrival City</label><input class="item-arr" placeholder="Destination"/></div></div>
+    <div class="fr"><div class="fg"><label>Departure Date</label><input type="date" class="item-depdate"/></div><div class="fg"><label>Estimated Amount ($)</label><input type="number" class="item-amount" placeholder="0.00" min="0" step="0.01"/></div></div>`;
+
+  const div = document.createElement('div');
+  div.className = 'ic';
+  div.id = `item-${id}`;
+  div.dataset.type = type;
+  div.innerHTML = `
+    <div class="ich">
+      <i class="ti ${icons[type]}" style="font-size:18px;color:var(--navy)"></i>
+      <span class="itl">${type}</span>
+      <button class="ir" onclick="document.getElementById('item-${id}').remove()" type="button"><i class="ti ti-x" style="font-size:14px"></i></button>
+    </div>${fields}`;
+  document.getElementById('items-container').appendChild(div);
+}
+
+function toggleEEDed() {
+  const v = document.getElementById('nf-eeded').value==='YES';
+  document.getElementById('ded-type-grp').style.display = v?'':'none';
+  document.getElementById('ded-freq-row').style.display = v?'':'none';
+}
+
+function gv(id) { const el=document.getElementById(id); return el?el.value:''; }
+
+async function collectAndSubmit() {
+  const travName = gv('nf-travname');
+  if (!travName.trim()) { toast('Traveler name is required.','err'); return; }
+  const itemEls = document.querySelectorAll('#items-container .ic');
+  if (!itemEls.length) { toast('Add at least one item.','err'); return; }
+
+  const items = [];
+  let valid = true;
+  itemEls.forEach(el => {
+    const type = el.dataset.type;
+    const amount = parseFloat(el.querySelector('.item-amount')?.value||0);
+    if (!amount) { toast('All items need an estimated amount.','err'); valid=false; return; }
+    items.push({
+      type, amount,
+      detail: el.querySelector('.item-detail,.item-dep')?.value||'',
+      departureLocation: el.querySelector('.item-dep')?.value||'',
+      arrivalLocation: el.querySelector('.item-arr')?.value||'',
+      departureDate: el.querySelector('.item-depdate')?.value||'',
+      tripType: el.querySelector('.item-triptype')?.value||'One Way',
+      checkIn: el.querySelector('.item-checkin')?.value||'',
+      checkOut: el.querySelector('.item-checkout')?.value||'',
+      guestName: el.querySelector('.item-guestname')?.value||'',
+      guestDOB: el.querySelector('.item-guestdob')?.value||'',
+      cityOfStay: el.querySelector('.item-city')?.value||'',
+      pickupLocation: el.querySelector('.item-pickup')?.value||'',
+      dropoffLocation: el.querySelector('.item-dropoff')?.value||'',
+      vendor: el.querySelector('.item-vendor')?.value||'',
+    });
+  });
+  if (!valid) return;
+
+  showLoading('Submitting request...');
+  await submitRequest({
+    branch: gv('nf-branch'),
+    corpDept: gv('nf-dept'),
+    travelerName: travName,
+    travelerID: gv('nf-travid'),
+    travelerEmail: gv('nf-travemail'),
+    travelerDOB: gv('nf-travdob'),
+    govIDLink: gv('nf-govid'),
+    paymentMethod: gv('nf-payment'),
+    customerBilled: gv('nf-custbilled'),
+    eeDeduction: gv('nf-eeded')==='YES' ? (gv('nf-dedtype')+' / '+gv('nf-freq')) : 'NO',
+    customerName: gv('nf-custname'),
+    customerPO: gv('nf-custpo'),
+    comments: gv('nf-comments'),
+    items,
+  });
+  hideLoading();
+}
+
+function openBookingPanel(reqID) {
+  const req = _requests.find(r=>r.id===reqID);
+  if (!req) return;
+  const ov = document.getElementById('overlays');
+  ov.innerHTML = `
+  <div class="po" onclick="if(event.target===this)closePanel()">
+    <div class="panel" style="max-width:440px">
+      <div class="ph"><i class="ti ti-check" style="font-size:20px;color:var(--ok)"></i><h2>Mark Request Booked</h2>
+        <button class="pc" onclick="closePanel()"><i class="ti ti-x" style="font-size:18px"></i></button></div>
+      <div class="pb">
+        <div class="dg" style="margin-bottom:20px">
+          <div><div class="dl">Request</div><div class="dv" style="font-weight:700">${req.id}</div></div>
+          <div><div class="dl">Traveler</div><div class="dv">${req.travelerName}</div></div>
+          <div><div class="dl">Total</div><div class="dv amt" style="font-size:16px">${fmtAmt(req.totalAmount)}</div></div>
+          <div><div class="dl">Requestor</div><div class="dv">${req.submitterName}</div></div>
+        </div>
+        <div class="fg" style="margin-bottom:16px">
+          <label>Confirmation Document (Google Drive Link)</label>
+          <input id="book-conf" type="url" placeholder="https://drive.google.com/..."/>
+          <span class="hint">Upload booking confirmation to Drive and paste the link here</span>
+        </div>
+        <div class="fg" style="margin-bottom:16px">
+          <label>Note to Requestor (optional)</label>
+          <textarea id="book-note" placeholder="Any notes about the booking..."></textarea>
+        </div>
+        <div class="infobox info">
+          <i class="ti ti-mail" style="font-size:16px;flex-shrink:0"></i>
+          <div>A confirmation email will be sent to <strong>${req.submitterEmail}</strong> with the booking details and your confirmation link.</div>
+        </div>
+      </div>
+      <div class="pf">
+        <button class="btn btn-outline" onclick="closePanel()">Cancel</button>
+        <button class="btn btn-primary" onclick="markBooked('${req.id}',document.getElementById('book-conf').value,document.getElementById('book-note').value)">
+          <i class="ti ti-send"></i> Confirm Booking & Notify
+        </button>
+      </div>
+    </div>
+  </div>`;
+}
+
+function openAddUser() {
+  const branches = _branches.filter(b=>b.active==='TRUE');
+  const ov = document.getElementById('overlays');
+  ov.innerHTML = `
+  <div class="po" onclick="if(event.target===this)closePanel()">
+    <div class="panel" style="max-width:500px">
+      <div class="ph"><i class="ti ti-user-plus" style="font-size:20px;color:var(--navy)"></i><h2>Add New User</h2>
+        <button class="pc" onclick="closePanel()"><i class="ti ti-x" style="font-size:18px"></i></button></div>
+      <div class="pb">
+        <div class="fr"><div class="fg"><label>First Name <span class="req">*</span></label><input id="nu-first" placeholder="First name"/></div><div class="fg"><label>Last Name <span class="req">*</span></label><input id="nu-last" placeholder="Last name"/></div></div>
+        <div class="fr full"><div class="fg"><label>Google Workspace Email <span class="req">*</span></label><input id="nu-email" type="email" placeholder="name@savardgroup.net"/></div></div>
+        <div class="fr">
+          <div class="fg"><label>Role <span class="req">*</span></label>
+            <select id="nu-role"><option>Requestor</option><option>Branch Approver</option><option>Procurement Admin</option><option>Leadership</option><option>Finance</option><option>Super Admin</option></select></div>
+          <div class="fg"><label>Primary Branch</label>
+            <select id="nu-primary"><option value="">— Select —</option>${branches.map(b=>`<option>${b.name}</option>`).join('')}</select></div>
+        </div>
+        <div class="fr full">
+          <div class="fg">
+            <label>Additional Branches</label>
+            <div style="display:flex;flex-wrap:wrap;gap:8px;padding:10px;border:1px solid var(--border);border-radius:7px;background:var(--bg)">
+              ${branches.map(b=>`<label style="display:flex;align-items:center;gap:5px;font-size:12px;cursor:pointer;font-weight:400"><input type="checkbox" class="nu-branch-cb" value="${b.name}" style="width:auto;padding:0;border:none"> ${b.name}</label>`).join('')}
+            </div>
+          </div>
+        </div>
+        <div class="fr full">
+          <div class="fg"><label>Assigned Approver Email</label>
+            <select id="nu-approver"><option value="">— None —</option>${_users.filter(u=>u.role==='Branch Approver'||u.role==='Leadership').map(u=>`<option value="${u.email}">${u.name}</option>`).join('')}</select></div>
+        </div>
+      </div>
+      <div class="pf">
+        <button class="btn btn-outline" onclick="closePanel()">Cancel</button>
+        <button class="btn btn-primary" onclick="saveNewUser()"><i class="ti ti-user-plus"></i> Create User</button>
+      </div>
+    </div>
+  </div>`;
+}
+
+async function saveNewUser() {
+  const first = gv('nu-first'), last = gv('nu-last'), email = gv('nu-email');
+  if (!first||!last||!email) { toast('Name and email are required.','err'); return; }
+  const name = first + ' ' + last;
+  const role = gv('nu-role');
+  const primary = gv('nu-primary');
+  const approver = gv('nu-approver');
+  const extraBranches = [...document.querySelectorAll('.nu-branch-cb:checked')].map(c=>c.value);
+  const allBranches = [...new Set([primary, ...extraBranches].filter(Boolean))].join('|');
+  showLoading('Creating user...');
+  await appendRow('Users', [genID('U'), name, email, role, allBranches, primary, approver, 'TRUE', new Date().toISOString(), '']);
+  toast(`User ${name} created!`, 'ok');
+  closePanel();
+  await navigate('users');
+  hideLoading();
+}
+
+function openEditUser(email) {
+  const user = _users.find(u=>u.email===email);
+  if (!user) return;
+  toast('Edit user panel — full edit including branch reassignment (coming in v1.1)', 'warn');
+}
+
+function openNotifs() {
+  const ov = document.getElementById('overlays');
+  ov.innerHTML = `
+  <div class="po" onclick="if(event.target===this)closePanel()">
+    <div class="panel" style="max-width:420px">
+      <div class="ph"><i class="ti ti-bell" style="font-size:20px;color:var(--navy)"></i><h2>Notifications</h2>
+        <button class="pc" onclick="closePanel()"><i class="ti ti-x" style="font-size:18px"></i></button></div>
+      <div class="pb" style="padding:0">
+        ${getPendingApprovals().slice(0,5).map(r=>`
+        <div style="padding:12px 16px;border-bottom:1px solid var(--border);display:flex;gap:10px;align-items:flex-start;background:var(--info-bg)">
+          <div style="width:32px;height:32px;border-radius:50%;background:var(--warn-bg);display:flex;align-items:center;justify-content:center;flex-shrink:0"><i class="ti ti-clipboard-check" style="color:var(--warn);font-size:15px"></i></div>
+          <div>
+            <div style="font-size:13px;font-weight:600">Approval needed: ${r.id}</div>
+            <div style="font-size:12px;color:var(--muted);margin-top:2px">${r.submitterName} · ${r.branch} · ${fmtAmt(r.totalAmount)}</div>
+            <div style="font-size:11px;color:var(--xs);margin-top:3px">${fmtDate(r.submittedAt)}</div>
+          </div>
+          <button class="btn btn-outline btn-sm" style="margin-left:auto" onclick="closePanel();openRequestDetail('${r.id}')">Review</button>
+        </div>`).join('') || '<div style="padding:24px;text-align:center;color:var(--muted);font-size:13px">No pending notifications</div>'}
+      </div>
+      <div class="pf"><button class="btn btn-outline" onclick="closePanel()">Close</button></div>
+    </div>
+  </div>`;
+}
+
+function filterTable(el) {
+  // Simple client-side filter
+  const table = document.getElementById('req-table');
+  if (!table) return;
+  const rows = table.querySelectorAll('tbody tr');
+  const term = (typeof el.value === 'string' && el.tagName==='INPUT') ? el.value.toLowerCase() : '';
+  const status = (el.tagName==='SELECT') ? el.value : '';
+  rows.forEach(r => {
+    const text = r.textContent.toLowerCase();
+    const matchTerm = !term || text.includes(term);
+    const matchStatus = !status || status==='All Statuses' || text.includes(status.toLowerCase());
+    r.style.display = (matchTerm && matchStatus) ? '' : 'none';
+  });
+}
+
+function openAddBranch() {
+  toast('Add Branch panel coming in admin v1.1', 'warn');
+}
+
+// ═══════════════════════════════════════════════════════════
+//  LOADING & TOAST
+// ═══════════════════════════════════════════════════════════
+function showLoading(msg) {
+  let ov = document.getElementById('loading-ov');
+  if (!ov) {
+    ov = document.createElement('div');
+    ov.id = 'loading-ov';
+    ov.className = 'loading-ov';
+    document.body.appendChild(ov);
+  }
+  ov.innerHTML = `<div class="spin-lg"></div><div class="ls">${msg||'Loading...'}</div>`;
+  ov.style.display = 'flex';
+}
+
+function hideLoading() {
+  const ov = document.getElementById('loading-ov');
+  if (ov) ov.style.display = 'none';
+}
+
+function toast(msg, type='ok') {
+  const icons = {ok:'ti-circle-check',err:'ti-circle-x',warn:'ti-alert-triangle'};
+  const t = document.createElement('div');
+  t.className = `toast ${type}`;
+  t.innerHTML = `<i class="ti ${icons[type]||'ti-info-circle'}" style="font-size:18px"></i>${msg}`;
+  document.getElementById('toast-container').appendChild(t);
+  setTimeout(() => t.remove(), 4500);
+}
+</script>
+</body>
+</html>
