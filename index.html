@@ -271,6 +271,30 @@ tr:hover td{background:#fafbfc}
   </div>
 </div>
 
+<!-- ACCESS PENDING SCREEN -->
+<div id="access-pending-screen" style="display:none" class="login-wrap">
+  <div class="login-card" style="width:420px">
+    <div style="width:64px;height:64px;border-radius:50%;background:var(--navy);display:flex;align-items:center;justify-content:center;font-size:20px;font-weight:700;color:var(--gold);margin:0 auto 16px;overflow:hidden" id="ap-avatar">?</div>
+    <div class="login-logo" style="font-size:15px;margin-bottom:2px" id="ap-name"></div>
+    <div class="login-sub" id="ap-email"></div>
+    <div style="margin:20px 0;padding:16px;background:#fffbeb;border:1px solid #fde68a;border-radius:10px;text-align:left">
+      <div style="font-size:14px;font-weight:700;color:#92400e;margin-bottom:6px;display:flex;align-items:center;gap:8px">
+        <i class="ti ti-lock" style="font-size:18px"></i> Access Not Yet Set Up
+      </div>
+      <div style="font-size:13px;color:#78350f;line-height:1.6">
+        Your account hasn't been configured in the Procurement Portal yet. Please contact your administrator or the STAPI team to get your account set up before logging in.
+      </div>
+    </div>
+    <div style="font-size:12px;color:var(--muted);margin-bottom:20px">
+      Your admin will need your email address:<br>
+      <strong style="color:var(--text)" id="ap-email2"></strong>
+    </div>
+    <button class="btn btn-outline" onclick="signOut()" style="width:100%;justify-content:center">
+      <i class="ti ti-logout"></i> Sign out
+    </button>
+  </div>
+</div>
+
 <!-- MAIN APP (hidden until logged in) -->
 <div id="app-screen" style="display:none">
   <div class="app">
@@ -370,10 +394,34 @@ async function loadUserProfile() {
 
     // Load user record from sheet
     await loadSettings();
+    await loadBranchesForSetup();
     await loadCurrentUser(res.email);
-    showApp();
+    if (CURRENT_USER) showApp();
   } catch (e) {
     showLoginError('Failed to load profile: ' + e.message);
+  }
+}
+
+// Pre-load branches so access pending screen can show branch list
+let _branchesForSetup = [];
+async function loadBranchesForSetup() {
+  try {
+    const data = await sheetsGet('Branches!A2:E100');
+    _branchesForSetup = (data.values||[]).filter(r=>r[4]==='TRUE').map(r=>({id:r[0],name:r[1],approver:r[2]}));
+  } catch(e) { _branchesForSetup = []; }
+}
+
+function showAccessPending() {
+  document.getElementById('login-screen').style.display = 'none';
+  document.getElementById('app-screen').style.display = 'none';
+  document.getElementById('access-pending-screen').style.display = '';
+  document.getElementById('ap-name').textContent = CURRENT_PROFILE.name;
+  document.getElementById('ap-email').textContent = CURRENT_PROFILE.email;
+  document.getElementById('ap-email2').textContent = CURRENT_PROFILE.email;
+  if (CURRENT_PROFILE.picture) {
+    document.getElementById('ap-avatar').innerHTML = `<img src="${CURRENT_PROFILE.picture}" style="width:100%;height:100%;border-radius:50%;object-fit:cover">`;
+  } else {
+    document.getElementById('ap-avatar').textContent = (CURRENT_PROFILE.name||'?').split(' ').map(n=>n[0]).join('').slice(0,2).toUpperCase();
   }
 }
 
@@ -389,19 +437,10 @@ async function loadCurrentUser(email) {
         approverEmail: user[6], active: user[7]
       };
     } else {
-      // New user — create with Requestor role
-      CURRENT_USER = {
-        id: 'U' + Date.now(), name: CURRENT_PROFILE.name,
-        email: email, role: 'Requestor',
-        branches: ['Unassigned'], primaryBranch: 'Unassigned',
-        approverEmail: '', active: 'TRUE'
-      };
-      await appendRow('Users', [
-        CURRENT_USER.id, CURRENT_USER.name, CURRENT_USER.email,
-        CURRENT_USER.role, 'Unassigned', 'Unassigned', '', 'TRUE',
-        new Date().toISOString(), 'Auto-created on first login'
-      ]);
-      toast('Welcome! Your account has been created. Contact an admin to assign your branch.', 'warn');
+      // No record found — show access pending screen
+      CURRENT_USER = null;
+      showAccessPending();
+      return;
     }
   } catch(e) {
     console.error('loadCurrentUser', e);
@@ -444,11 +483,12 @@ function showApp() {
 }
 
 function signOut() {
-  google.accounts.oauth2.revoke(ACCESS_TOKEN, () => {});
+  if (ACCESS_TOKEN) google.accounts.oauth2.revoke(ACCESS_TOKEN, () => {});
   ACCESS_TOKEN = null;
   CURRENT_USER = null;
   CURRENT_PROFILE = null;
   document.getElementById('app-screen').style.display = 'none';
+  document.getElementById('access-pending-screen').style.display = 'none';
   document.getElementById('login-screen').style.display = '';
 }
 
@@ -1643,17 +1683,49 @@ function openAddUser() {
 async function saveNewUser() {
   const first = gv('nu-first'), last = gv('nu-last'), email = gv('nu-email');
   if (!first||!last||!email) { toast('Name and email are required.','err'); return; }
+  if (!email.endsWith('@savardgroup.net')) { toast('Email must be a @savardgroup.net address.','err'); return; }
   const name = first + ' ' + last;
   const role = gv('nu-role');
   const primary = gv('nu-primary');
   const approver = gv('nu-approver');
   const extraBranches = [...document.querySelectorAll('.nu-branch-cb:checked')].map(c=>c.value);
   const allBranches = [...new Set([primary, ...extraBranches].filter(Boolean))].join('|');
-  showLoading('Creating user...');
-  await appendRow('Users', [genID('U'), name, email, role, allBranches, primary, approver, 'TRUE', new Date().toISOString(), '']);
-  toast(`User ${name} created!`, 'ok');
+  const approverUser = _users.find(u=>u.email===approver);
+  const approverName = approverUser ? approverUser.name : approver || 'your assigned approver';
+  const portalURL = window.location.href;
+
+  showLoading('Creating user and sending welcome email...');
+  await appendRow('Users', [genID('U'), name, email, role, allBranches, primary, approver, 'TRUE', new Date().toISOString(), 'Created by admin']);
+
+  // Send welcome email
+  await sendEmail(
+    email,
+    `Welcome to the Savard Group Procurement Portal`,
+    emailTemplate(
+      `You're all set, ${first}!`,
+      `<p style="font-size:14px;color:#374151;margin-bottom:16px">
+        Your account has been set up in the <strong>Savard Group Procurement Portal</strong> by ${CURRENT_USER.name}.
+      </p>
+      <table style="width:100%;border-collapse:collapse;font-size:13px;margin-bottom:20px;background:#f9fafb;border-radius:8px;overflow:hidden">
+        <tr><td style="padding:10px 14px;color:#6b7280;border-bottom:1px solid #e5e7eb">Your Name</td><td style="padding:10px 14px;font-weight:600;border-bottom:1px solid #e5e7eb">${name}</td></tr>
+        <tr><td style="padding:10px 14px;color:#6b7280;border-bottom:1px solid #e5e7eb">Role</td><td style="padding:10px 14px;font-weight:600;border-bottom:1px solid #e5e7eb">${role}</td></tr>
+        <tr><td style="padding:10px 14px;color:#6b7280;border-bottom:1px solid #e5e7eb">Branch / Department</td><td style="padding:10px 14px;font-weight:600;border-bottom:1px solid #e5e7eb">${primary||'—'}</td></tr>
+        <tr><td style="padding:10px 14px;color:#6b7280">Your Approver</td><td style="padding:10px 14px;font-weight:600">${approverName}</td></tr>
+      </table>
+      <p style="font-size:14px;color:#374151;margin-bottom:16px">
+        Click the button below to sign in with your Savard Google account and get started.
+      </p>
+      <a href="${portalURL}" style="display:inline-block;background:#0f1f3d;color:#fff;padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:600;font-size:14px">
+        Open Procurement Portal →
+      </a>`,
+      `If you have any questions, contact the STAPI team or reply to this email.`,
+      `Your account was created by ${CURRENT_USER.name} on ${new Date().toLocaleDateString('en-US',{month:'long',day:'numeric',year:'numeric'})}.`
+    )
+  );
+
+  toast(`${name} created and welcome email sent to ${email}!`, 'ok');
   closePanel();
-  await navigate('users');
+  await navigate('admin-panel');
   hideLoading();
 }
 
@@ -1895,16 +1967,49 @@ async function saveEditUser(email) {
   const idx = rows.findIndex(r=>r[2]===email);
   if (idx < 1) { toast('User not found','err'); return; }
 
+  const oldRole = rows[idx][3]||'';
+  const oldBranch = rows[idx][5]||'';
   const name = gv('eu-name');
   const role = gv('eu-role');
   const primary = gv('eu-primary');
   const approver = gv('eu-approver');
   const active = gv('eu-active');
+  const wasActive = rows[idx][7]||'TRUE';
   const extraBranches = [...document.querySelectorAll('.eu-branch-cb:checked')].map(c=>c.value);
   const allBranches = [...new Set([primary,...extraBranches].filter(Boolean))].join('|');
+  const approverUser = _users.find(u=>u.email===approver);
+  const approverName = approverUser ? approverUser.name : approver||'your assigned approver';
+  const portalURL = window.location.href;
 
   showLoading('Saving...');
   await sheetsUpdate(`Users!B${idx+1}:J${idx+1}`, [[name, email, role, allBranches, primary, approver, active, rows[idx][8]||'', rows[idx][9]||'']]);
+
+  // Send notification if role, branch, or active status changed
+  const roleChanged = role !== oldRole;
+  const branchChanged = primary !== oldBranch;
+  const reactivated = active === 'TRUE' && wasActive !== 'TRUE';
+
+  if (roleChanged || branchChanged || reactivated) {
+    await sendEmail(
+      email,
+      `Your Savard Procurement Portal account has been updated`,
+      emailTemplate(
+        `Account Updated`,
+        `<p style="font-size:14px;color:#374151;margin-bottom:16px">
+          Hi ${name.split(' ')[0]}, your Procurement Portal account has been updated by ${CURRENT_USER.name}.
+        </p>
+        <table style="width:100%;border-collapse:collapse;font-size:13px;margin-bottom:20px;background:#f9fafb;border-radius:8px;overflow:hidden">
+          ${roleChanged?`<tr><td style="padding:10px 14px;color:#6b7280;border-bottom:1px solid #e5e7eb">Role</td><td style="padding:10px 14px;font-weight:600;border-bottom:1px solid #e5e7eb">${oldRole} → <strong style="color:#0f1f3d">${role}</strong></td></tr>`:''}
+          ${branchChanged?`<tr><td style="padding:10px 14px;color:#6b7280;border-bottom:1px solid #e5e7eb">Branch</td><td style="padding:10px 14px;font-weight:600;border-bottom:1px solid #e5e7eb">${oldBranch} → <strong style="color:#0f1f3d">${primary}</strong></td></tr>`:''}
+          <tr><td style="padding:10px 14px;color:#6b7280">Approver</td><td style="padding:10px 14px;font-weight:600">${approverName}</td></tr>
+        </table>
+        ${reactivated?`<p style="font-size:14px;color:#059669;font-weight:600;margin-bottom:16px">Your account has been reactivated.</p>`:''}
+        <a href="${portalURL}" style="display:inline-block;background:#0f1f3d;color:#fff;padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:600;font-size:14px">Open Procurement Portal →</a>`,
+        `If you have questions about these changes, contact ${CURRENT_USER.name} or the STAPI team.`, null
+      )
+    );
+  }
+
   toast(`${name} updated successfully.`, 'ok');
   closePanel();
   await navigate('admin-panel');
