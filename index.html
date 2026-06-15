@@ -23,7 +23,7 @@
       "https://www.googleapis.com/auth/userinfo.profile",
     ].join(" "),
     LEADERSHIP_THRESHOLD: 400,   // overwritten from Settings sheet on load
-    VERSION: "1.0.0",
+    VERSION: "3.0.0",
   };
 </script>
 
@@ -75,7 +75,7 @@ body{font-family:'Segoe UI',system-ui,sans-serif;background:var(--bg);color:var(
 /* BUTTONS */
 .btn{display:inline-flex;align-items:center;gap:6px;padding:7px 14px;border-radius:7px;font-size:13px;font-weight:500;cursor:pointer;border:none;transition:all .15s;font-family:inherit}
 .btn-primary{background:var(--navy);color:#fff}.btn-primary:hover{background:var(--navy-l)}
-.btn-gold{background:var(--gold);color:var(--navy);font-weight:700}.btn-gold:hover{background:var(--gold-l)}
+.btn-gold{background:var(--gold);color:#fff;font-weight:700}.btn-gold:hover{background:var(--gold-l)}
 .btn-outline{background:transparent;border:1px solid var(--border);color:var(--text)}.btn-outline:hover{background:var(--bg)}
 .btn-sm{padding:5px 10px;font-size:12px}
 .btn-ok{background:var(--ok-bg);color:var(--ok);border:1px solid var(--ok-b)}
@@ -193,7 +193,7 @@ tr:hover td{background:#fafbfc}
 /* USER ROW */
 .ur-row{display:flex;align-items:center;gap:12px;padding:12px 16px;border-bottom:1px solid var(--border)}
 .ur-row:last-child{border-bottom:none}
-.ur-av{width:36px;height:36px;border-radius:50%;background:var(--navy);display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;color:var(--gold);flex-shrink:0}
+.ur-av{width:36px;height:36px;border-radius:50%;background:var(--navy);display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;color:#fff;flex-shrink:0}
 .ur-ud .un{font-size:13px;font-weight:600}
 .ur-ud .ub{font-size:11px;color:var(--muted)}
 .bt{display:flex;flex-wrap:wrap;gap:4px}
@@ -407,7 +407,7 @@ async function loadUserProfile() {
 let _branchesForSetup = [];
 async function loadBranchesForSetup() {
   try {
-    const data = await sheetsGet('Branches!A2:E100');
+    const data = await sheetsGet('Branches!A2:F100');
     _branchesForSetup = (data.values||[]).filter(r=>r[4]==='TRUE').map(r=>({id:r[0],name:r[1],approver:r[2]}));
   } catch(e) { _branchesForSetup = []; }
 }
@@ -608,11 +608,11 @@ async function loadAllData() {
   showLoading('Loading data...');
   try {
     const [rRes, iRes, aRes, uRes, bRes] = await Promise.all([
-      sheetsGet('Requests!A2:T2000'),
+      sheetsGet('Requests!A2:U2000'),
       sheetsGet('OrderItems!A2:V2000'),
       sheetsGet('Approvals!A2:I2000'),
       sheetsGet('Users!A2:J500'),
-      sheetsGet('Branches!A2:E100'),
+      sheetsGet('Branches!A2:F100'),
     ]);
     _requests = parseRows(rRes.values||[], REQUEST_KEYS);
     _items    = parseRows(iRes.values||[], ITEM_KEYS);
@@ -625,11 +625,11 @@ async function loadAllData() {
   hideLoading();
 }
 
-const REQUEST_KEYS  = ['id','submittedAt','submitterName','submitterEmail','branch','corpDept','travelerName','travelerID','travelerEmail','travelerDOB','govIDLink','totalAmount','status','needsLeadership','customerName','customerPO','paymentMethod','customerBilled','eeDeduction','comments'];
+const REQUEST_KEYS  = ['id','submittedAt','submitterName','submitterEmail','branch','corpDept','travelerName','travelerID','travelerEmail','travelerDOB','govIDLink','totalAmount','status','needsLeadership','customerName','customerPO','paymentMethod','customerBilled','eeDeduction','comments','requestKind'];
 const ITEM_KEYS     = ['id','requestID','purchaseType','itemType','detail','departureDate','departureLocation','arrivalLocation','tripType','checkInDate','checkOutDate','guestName','guestDOB','cityOfStay','pickupLocation','dropoffLocation','preferredVendor','estimatedAmount','purchaseAmount','purchaseDate','confirmationDocLink','receiptFileLink'];
 const APPROVAL_KEYS = ['id','requestID','step','approverName','approverEmail','decision','decidedAt','note','notificationSent'];
 const USER_KEYS     = ['id','name','email','role','branches','primaryBranch','approverEmail','active','createdAt','notes'];
-const BRANCH_KEYS   = ['id','name','primaryApproverEmail','backupApproverEmail','active'];
+const BRANCH_KEYS   = ['id','name','primaryApproverEmail','backupApproverEmail','active','type'];
 
 function parseRows(rows, keys) {
   return rows.map(r => {
@@ -652,14 +652,30 @@ function getMyRequests() {
     return _requests.filter(r => CURRENT_USER.branches.includes(r.branch));
   return _requests;
 }
-function getPendingApprovals() {
-  return _requests.filter(r => {
-    if (r.status === 'Pending Approval') {
-      const approverEmail = getApproverForBranch(r.branch);
-      return approverEmail === CURRENT_USER.email || CURRENT_USER.branches.includes(r.branch);
+function isQuote(req) { return (req.requestKind||'') === 'Quote Request'; }
+// Branches a user can approve for: their assigned branches, plus any branch
+// where they are listed as the primary/backup approver.
+function getApproverBranches() {
+  const set = new Set((CURRENT_USER.branches||[]).filter(Boolean));
+  _branches.forEach(b => {
+    if (b.active==='TRUE' &&
+        (b.primaryApproverEmail===CURRENT_USER.email || b.backupApproverEmail===CURRENT_USER.email)) {
+      set.add(b.name);
     }
-    return false;
   });
+  return [...set];
+}
+// Can the current user approve THIS specific request at the branch step?
+function canApproveRequest(req) {
+  if (req.status !== 'Pending Approval') return false;
+  if (!['Branch Approver','Super Admin'].includes(CURRENT_USER.role)) return false;
+  const mine = getApproverBranches();
+  // Branch Approvers are scoped to their branches; Super Admins likewise approve
+  // within their own department/branches.
+  return mine.includes(req.branch) || getApproverForBranch(req.branch) === CURRENT_USER.email;
+}
+function getPendingApprovals() {
+  return _requests.filter(r => canApproveRequest(r));
 }
 function getLeadershipQueue() {
   return _requests.filter(r => r.status === 'Leadership Approval');
@@ -693,11 +709,11 @@ const NAV_ICONS = {
 };
 const ROLE_NAV = {
   Requestor:         [null,['dashboard','my-requests','new-request']],
-  'Branch Approver': [null,['dashboard'],['Approvals',['pending-approvals']],['Requests',['my-requests']]],
+  'Branch Approver': [null,['dashboard'],['Approvals',['pending-approvals']],['Requests',['my-requests']],['Reports',['reports']]],
   'Procurement Admin':[null,['dashboard'],['Booking',['queue']],['Requests',['new-request','all-requests']]],
   Leadership:        [null,['dashboard'],['Approvals',['leadership-approvals']],['Requests',['all-requests']]],
   Finance:           [null,['dashboard'],['Data',['all-requests','reports']]],
-  'Super Admin':     [null,['dashboard'],['Operations',['all-requests']],['Administration',['users','approval-rules','reports','admin-panel']]],
+  'Super Admin':     [null,['dashboard'],['Approvals',['pending-approvals']],['Operations',['new-request','all-requests']],['Administration',['users','approval-rules','reports','admin-panel']]],
 };
 
 function renderNav() {
@@ -707,6 +723,7 @@ function renderNav() {
   // Count badges
   const badges = {};
   if (CURRENT_USER.role==='Branch Approver') badges['pending-approvals'] = getPendingApprovals().length||0;
+  if (CURRENT_USER.role==='Super Admin') badges['pending-approvals'] = getPendingApprovals().length||0;
   if (CURRENT_USER.role==='Procurement Admin') badges['queue'] = getProcurementQueue().length||0;
   if (CURRENT_USER.role==='Leadership') badges['leadership-approvals'] = getLeadershipQueue().length||0;
 
@@ -772,7 +789,11 @@ function statusBadge(s) {
   return `<span class="bdg ${m[s]||'b-gray'}">${s}</span>`;
 }
 function typeIcon(t) {
-  return {Flight:'ti-plane',Hotel:'ti-building','Car Rental':'ti-car',Bus:'ti-bus'}[t]||'ti-package';
+  return {
+    Flight:'ti-plane',Hotel:'ti-building','Car Rental':'ti-car',Bus:'ti-bus',
+    Transportation:'ti-truck-delivery',Housing:'ti-home',PPE:'ti-shield-check',
+    'Office Supplies':'ti-paperclip',Tech:'ti-device-laptop',Miscellaneous:'ti-package'
+  }[t]||'ti-package';
 }
 function fmtAmt(n) {
   const v = parseFloat(n)||0;
@@ -792,7 +813,7 @@ function renderRequestTable(reqs, title) {
     const total = parseFloat(r.totalAmount)||0;
     const over = total >= CONFIG.LEADERSHIP_THRESHOLD;
     return `<tr class="cr" onclick="openRequestDetail('${r.id}')">
-      <td><span style="font-weight:600;color:var(--navy)">${r.id}</span></td>
+      <td><span style="font-weight:600;color:var(--navy)">${r.id}</span>${isQuote(r)?` <span class="bdg b-info" style="font-size:9px;padding:1px 6px">QUOTE</span>`:''}</td>
       <td>${r.submitterName}</td>
       <td><span class="bdg b-navy">${r.branch||'—'}</span></td>
       <td>${typeChips||'—'}</td>
@@ -1015,7 +1036,7 @@ function renderApprovalRules() {
           <span class="btag">${b.name}</span>
           <span style="flex:1">${b.primaryApproverEmail||'—'}</span>
           <span style="color:var(--muted);font-size:12px">Backup: ${b.backupApproverEmail||'—'}</span>
-          <button class="btn btn-outline btn-sm"><i class="ti ti-edit"></i></button>
+          <button class="btn btn-outline btn-sm" onclick="openEditBranch('${b.id}')"><i class="ti ti-edit"></i></button>
         </div>`).join('')}
       </div>
     </div>
@@ -1023,29 +1044,54 @@ function renderApprovalRules() {
 }
 
 function renderReports() {
+  // Branch Approvers see spend for only the branches they cover, always broken
+  // down by branch. Everyone else (Finance, Leadership, Procurement Admin,
+  // Super Admin) sees the full company-wide view.
+  const scoped = CURRENT_USER.role === 'Branch Approver';
+  const myBranches = getApproverBranches();
+  const reqs = scoped ? _requests.filter(r => myBranches.includes(r.branch)) : _requests;
+  const reqIds = new Set(reqs.map(r => r.id));
+  const items = scoped ? _items.filter(i => reqIds.has(i.requestID)) : _items;
+
   const byBranch = {};
-  _requests.forEach(r => {
+  reqs.forEach(r => {
     byBranch[r.branch] = (byBranch[r.branch]||0) + (parseFloat(r.totalAmount)||0);
   });
+  // Make sure every covered branch shows up, even with $0 spend.
+  if (scoped) myBranches.forEach(b => { if (byBranch[b]===undefined) byBranch[b]=0; });
   const sorted = Object.entries(byBranch).sort((a,b)=>b[1]-a[1]);
   const max = sorted[0]?.[1]||1;
-  const totalSpend = _requests.reduce((s,r)=>s+(parseFloat(r.totalAmount)||0),0);
-  const byType = {Flight:0,Hotel:0,'Car Rental':0,Bus:0};
-  _items.forEach(i=>{ if(byType[i.itemType]!==undefined) byType[i.itemType]+=(parseFloat(i.estimatedAmount)||0); });
+  const totalSpend = reqs.reduce((s,r)=>s+(parseFloat(r.totalAmount)||0),0);
+
+  // Spend by item type, split into Travel vs Item Request groups.
+  const travelTypes = ['Flight','Hotel','Car Rental','Bus'];
+  const byType = {};
+  items.forEach(i=>{ byType[i.itemType] = (byType[i.itemType]||0) + (parseFloat(i.estimatedAmount)||0); });
+  const travelSpend = travelTypes.reduce((s,t)=>s+(byType[t]||0),0);
+  const itemSpend = Object.entries(byType).filter(([t])=>!travelTypes.includes(t)).reduce((s,[,v])=>s+v,0);
+  const quoteCount = reqs.filter(r=>isQuote(r)).length;
+
+  const branchLabel = scoped
+    ? (myBranches.length>1 ? `Spend by Branch (your ${myBranches.length} branches)` : 'Spend by Branch')
+    : 'Spend by Branch';
 
   return `
+  ${scoped ? `<div class="infobox info" style="margin-bottom:16px">
+    <i class="ti ti-info-circle" style="font-size:16px;flex-shrink:0;margin-top:1px"></i>
+    <div>Showing spend for the branch${myBranches.length>1?'es':''} you approve for: <strong>${myBranches.join(', ')||'—'}</strong>.</div>
+  </div>`:''}
   <div class="sg">
     <div class="sc acc"><div class="sl">Total Spend</div><div class="sv">${fmtAmt(totalSpend)}</div></div>
-    <div class="sc"><div class="sl">Flights</div><div class="sv">${fmtAmt(byType.Flight)}</div></div>
-    <div class="sc"><div class="sl">Hotels</div><div class="sv">${fmtAmt(byType.Hotel)}</div></div>
-    <div class="sc"><div class="sl">Car Rentals</div><div class="sv">${fmtAmt(byType['Car Rental'])}</div></div>
-    <div class="sc"><div class="sl">Total Requests</div><div class="sv">${_requests.length}</div></div>
+    <div class="sc"><div class="sl">Travel</div><div class="sv">${fmtAmt(travelSpend)}</div></div>
+    <div class="sc"><div class="sl">Item Requests</div><div class="sv">${fmtAmt(itemSpend)}</div></div>
+    <div class="sc"><div class="sl">Quotes</div><div class="sv">${quoteCount}</div></div>
+    <div class="sc"><div class="sl">Total Requests</div><div class="sv">${reqs.length}</div></div>
   </div>
   <div class="two-col">
     <div>
-      <div class="sh"><h3>Spend by Branch</h3></div>
+      <div class="sh"><h3>${branchLabel}</h3></div>
       <div class="tw" style="padding:20px">
-        ${sorted.slice(0,10).map(([b,v])=>`
+        ${sorted.slice(0,15).map(([b,v])=>`
         <div style="margin-bottom:14px">
           <div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:4px">
             <span>${b||'Unknown'}</span><span style="font-weight:700">${fmtAmt(v)}</span>
@@ -1058,12 +1104,19 @@ function renderReports() {
     </div>
     <div>
       <div class="sh"><h3>Request Status Breakdown</h3></div>
-      <div class="tw" style="padding:20px">
+      <div class="tw" style="padding:20px;margin-bottom:16px">
         ${['Open','Pending Approval','Leadership Approval','Ready to Book','Completed','Rejected'].map(s=>{
-          const count = _requests.filter(r=>r.status===s).length;
+          const count = reqs.filter(r=>r.status===s).length;
           return `<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border);font-size:13px">
             ${statusBadge(s)}<span style="font-weight:700">${count}</span></div>`;
         }).join('')}
+      </div>
+      <div class="sh"><h3>Spend by Type</h3></div>
+      <div class="tw" style="padding:20px">
+        ${Object.entries(byType).sort((a,b)=>b[1]-a[1]).map(([t,v])=>`
+        <div style="display:flex;justify-content:space-between;align-items:center;padding:7px 0;border-bottom:1px solid var(--border);font-size:13px">
+          <span class="tc"><i class="ti ${typeIcon(t)}" aria-hidden="true"></i>${t}</span><span style="font-weight:700">${fmtAmt(v)}</span>
+        </div>`).join('') || '<p style="color:var(--muted);font-size:13px">No data yet</p>'}
       </div>
     </div>
   </div>`;
@@ -1074,23 +1127,25 @@ function renderReports() {
 // ═══════════════════════════════════════════════════════════
 async function submitRequest(formData) {
   const reqID = genID('R');
+  const kind = formData.requestKind || 'Purchase Request';
   const total = formData.items.reduce((s,i)=>s+(parseFloat(i.amount)||0),0);
   const needsLeadership = total >= CONFIG.LEADERSHIP_THRESHOLD;
 
-  // Write Request row
+  // Write Request row (column U = requestKind)
   await appendRow('Requests', [
     reqID, new Date().toISOString(), CURRENT_USER.name, CURRENT_USER.email,
     formData.branch, formData.corpDept, formData.travelerName, formData.travelerID,
     formData.travelerEmail, formData.travelerDOB, formData.govIDLink,
     total.toFixed(2), 'Pending Approval', needsLeadership?'YES':'NO',
     formData.customerName, formData.customerPO, formData.paymentMethod,
-    formData.customerBilled, formData.eeDeduction, formData.comments
+    formData.customerBilled, formData.eeDeduction, formData.comments, kind
   ]);
 
-  // Write each item
+  // Write each item — purchaseType holds the category (Travel / Item Request),
+  // itemType holds the specific type (Flight, PPE, Tech, ...).
   for (const item of formData.items) {
     await appendRow('OrderItems', [
-      genID('I'), reqID, item.type, item.type, item.detail||'',
+      genID('I'), reqID, item.category||'Travel', item.type, item.detail||'',
       item.departureDate||'', item.departureLocation||'', item.arrivalLocation||'',
       item.tripType||'', item.checkIn||'', item.checkOut||'',
       item.guestName||formData.travelerName, item.guestDOB||formData.travelerDOB,
@@ -1128,7 +1183,7 @@ async function submitRequest(formData) {
     );
   }
 
-  toast(`Request ${reqID} submitted! Your approver has been notified.`, 'ok');
+  toast(`${kind === 'Quote Request' ? 'Quote request' : 'Request'} ${reqID} submitted! Your approver has been notified.`, 'ok');
   closePanel();
   await navigate('my-requests');
 }
@@ -1294,7 +1349,7 @@ function openRequestDetail(reqID) {
   const total = parseFloat(req.totalAmount)||0;
   const over = total >= CONFIG.LEADERSHIP_THRESHOLD;
 
-  const canApprove = CURRENT_USER.role==='Branch Approver' && req.status==='Pending Approval';
+  const canApprove = canApproveRequest(req);
   const canLeadership = CURRENT_USER.role==='Leadership' && req.status==='Leadership Approval';
   const canBook = CURRENT_USER.role==='Procurement Admin' && req.status==='Ready to Book';
 
@@ -1316,6 +1371,7 @@ function openRequestDetail(reqID) {
         <i class="ti ti-file-text" style="font-size:20px;color:var(--navy)"></i>
         <h2>Request ${req.id}</h2>
         ${statusBadge(req.status)}
+        ${isQuote(req)?`<span class="bdg b-info"><i class="ti ti-quote" style="font-size:11px"></i> Quote</span>`:''}
         ${over?`<span class="pf-flag"><i class="ti ti-alert-triangle" style="font-size:11px"></i>Leadership req.</span>`:''}
         <button class="pc" onclick="closePanel()"><i class="ti ti-x" style="font-size:18px"></i></button>
       </div>
@@ -1430,6 +1486,20 @@ function openNewRequest() {
       </div>
       <div class="pb">
         <div class="fs-sec">
+          <div class="fs-title">Request Type</div>
+          <div class="fr">
+            <div class="fg"><label>What are you submitting? <span class="req">*</span></label>
+              <select id="nf-kind" onchange="onKindChange()">
+                <option value="Purchase Request">Purchase Request — buy/book now</option>
+                <option value="Quote Request">Request for Quote — get pricing first</option>
+              </select></div>
+          </div>
+          <div class="infobox info" id="kind-hint" style="margin-top:4px">
+            <i class="ti ti-info-circle" style="font-size:16px;flex-shrink:0;margin-top:1px"></i>
+            <div id="kind-hint-text">A purchase request is routed for approval, then booked by procurement.</div>
+          </div>
+        </div>
+        <div class="fs-sec">
           <div class="fs-title">Request Info</div>
           <div class="fr">
             <div class="fg"><label>Branch / Department <span class="req">*</span></label>
@@ -1443,9 +1513,9 @@ function openNewRequest() {
           </div>
         </div>
         <div class="fs-sec">
-          <div class="fs-title">Traveler / Employee</div>
+          <div class="fs-title">For (Employee / Traveler / Recipient)</div>
           <div class="fr">
-            <div class="fg"><label>Traveler Full Name <span class="req">*</span></label><input id="nf-travname" placeholder="Legal name as on ID"/></div>
+            <div class="fg"><label>Full Name <span class="req">*</span></label><input id="nf-travname" placeholder="Who this request is for"/></div>
             <div class="fg"><label>Employee ID</label><input id="nf-travid" placeholder="EE ID if applicable"/></div>
           </div>
           <div class="fr">
@@ -1461,11 +1531,21 @@ function openNewRequest() {
         <div class="fs-sec">
           <div class="fs-title">Request Items</div>
           <div id="items-container"></div>
+          <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--muted);margin:6px 0 6px">Travel</div>
           <div class="air">
-            <button class="aib" onclick="addItem('Flight')"><i class="ti ti-plane"></i> Add Flight</button>
-            <button class="aib" onclick="addItem('Hotel')"><i class="ti ti-building"></i> Add Hotel</button>
-            <button class="aib" onclick="addItem('Car Rental')"><i class="ti ti-car"></i> Add Car Rental</button>
-            <button class="aib" onclick="addItem('Bus')"><i class="ti ti-bus"></i> Add Bus</button>
+            <button class="aib" onclick="addItem('Flight')"><i class="ti ti-plane"></i> Flight</button>
+            <button class="aib" onclick="addItem('Hotel')"><i class="ti ti-building"></i> Hotel</button>
+            <button class="aib" onclick="addItem('Car Rental')"><i class="ti ti-car"></i> Car Rental</button>
+            <button class="aib" onclick="addItem('Bus')"><i class="ti ti-bus"></i> Bus</button>
+          </div>
+          <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--muted);margin:14px 0 6px">Item Request</div>
+          <div class="air">
+            <button class="aib" onclick="addItem('Transportation')"><i class="ti ti-truck-delivery"></i> Transportation</button>
+            <button class="aib" onclick="addItem('Housing')"><i class="ti ti-home"></i> Housing</button>
+            <button class="aib" onclick="addItem('PPE')"><i class="ti ti-shield-check"></i> PPE</button>
+            <button class="aib" onclick="addItem('Office Supplies')"><i class="ti ti-paperclip"></i> Office Supplies</button>
+            <button class="aib" onclick="addItem('Tech')"><i class="ti ti-device-laptop"></i> Tech</button>
+            <button class="aib" onclick="addItem('Miscellaneous')"><i class="ti ti-package"></i> Miscellaneous</button>
           </div>
         </div>
         <div class="fs-sec">
@@ -1510,38 +1590,71 @@ function openNewRequest() {
   addItem('Flight'); // Add one default item
 }
 
+// Item categories that use the generic (non-travel) field set.
+const ITEM_REQUEST_TYPES = ['Transportation','Housing','PPE','Office Supplies','Tech','Miscellaneous'];
+
+// Is the current form a quote request? Drives whether amount is required.
+function isQuoteForm() {
+  const el = document.getElementById('nf-kind');
+  return el && el.value === 'Quote Request';
+}
+function amtLabel() {
+  return isQuoteForm()
+    ? 'Estimated Amount ($) <span class="hint" style="font-weight:400">— optional for quotes</span>'
+    : 'Estimated Amount ($) <span class="req">*</span>';
+}
+
 function addItem(type) {
-  const icons = {Flight:'ti-plane',Hotel:'ti-building','Car Rental':'ti-car',Bus:'ti-bus'};
   const id = itemCount++;
+  const quote = isQuoteForm();
   let fields = '';
   if (type==='Flight') fields = `
     <div class="fr"><div class="fg"><label>Departure Airport <span class="req">*</span></label><input class="item-dep" placeholder="e.g. BTR (Baton Rouge)"/></div><div class="fg"><label>Arrival Airport <span class="req">*</span></label><input class="item-arr" placeholder="e.g. BGR (Bangor)"/></div></div>
     <div class="fr"><div class="fg"><label>Departure Date</label><input type="date" class="item-depdate"/></div><div class="fg"><label>Trip Type</label><select class="item-triptype"><option>One Way</option><option>Round Trip</option></select></div></div>
-    <div class="fr"><div class="fg"><label>Preferred Airline / Site</label><input class="item-vendor" placeholder="Expedia, American Airlines..."/></div><div class="fg"><label>Estimated Amount ($) <span class="req">*</span></label><input type="number" class="item-amount" placeholder="0.00" min="0" step="0.01"/></div></div>`;
+    <div class="fr"><div class="fg"><label>Preferred Airline / Site</label><input class="item-vendor" placeholder="Expedia, American Airlines..."/></div><div class="fg"><label>${amtLabel()}</label><input type="number" class="item-amount" placeholder="0.00" min="0" step="0.01"/></div></div>`;
   else if (type==='Hotel') fields = `
     <div class="fr"><div class="fg"><label>Hotel Name <span class="req">*</span></label><input class="item-detail" placeholder="Hotel name or address"/></div><div class="fg"><label>City of Stay</label><input class="item-city" placeholder="City, State"/></div></div>
     <div class="fr"><div class="fg"><label>Guest Full Name</label><input class="item-guestname" placeholder="Name as on booking"/></div><div class="fg"><label>Guest DOB</label><input type="date" class="item-guestdob"/></div></div>
     <div class="fr"><div class="fg"><label>Check-in</label><input type="date" class="item-checkin"/></div><div class="fg"><label>Check-out</label><input type="date" class="item-checkout"/></div></div>
-    <div class="fr"><div class="fg"><label>Estimated Amount ($) <span class="req">*</span></label><input type="number" class="item-amount" placeholder="0.00" min="0" step="0.01"/></div></div>`;
+    <div class="fr"><div class="fg"><label>${amtLabel()}</label><input type="number" class="item-amount" placeholder="0.00" min="0" step="0.01"/></div></div>`;
   else if (type==='Car Rental') fields = `
     <div class="fr"><div class="fg"><label>Pickup Location <span class="req">*</span></label><input class="item-pickup" placeholder="City or address"/></div><div class="fg"><label>Drop-off Location</label><input class="item-dropoff" placeholder="City or address"/></div></div>
     <div class="fr"><div class="fg"><label>Pickup Date</label><input type="date" class="item-depdate"/></div><div class="fg"><label>Drop-off Date</label><input type="date" class="item-checkout"/></div></div>
-    <div class="fr"><div class="fg"><label>Preferred Vendor</label><input class="item-vendor" placeholder="Enterprise, Hertz..."/></div><div class="fg"><label>Estimated Amount ($) <span class="req">*</span></label><input type="number" class="item-amount" placeholder="0.00" min="0" step="0.01"/></div></div>`;
-  else fields = `
+    <div class="fr"><div class="fg"><label>Preferred Vendor</label><input class="item-vendor" placeholder="Enterprise, Hertz..."/></div><div class="fg"><label>${amtLabel()}</label><input type="number" class="item-amount" placeholder="0.00" min="0" step="0.01"/></div></div>`;
+  else if (type==='Bus') fields = `
     <div class="fr"><div class="fg"><label>Departure City</label><input class="item-dep" placeholder="Origin"/></div><div class="fg"><label>Arrival City</label><input class="item-arr" placeholder="Destination"/></div></div>
-    <div class="fr"><div class="fg"><label>Departure Date</label><input type="date" class="item-depdate"/></div><div class="fg"><label>Estimated Amount ($)</label><input type="number" class="item-amount" placeholder="0.00" min="0" step="0.01"/></div></div>`;
+    <div class="fr"><div class="fg"><label>Departure Date</label><input type="date" class="item-depdate"/></div><div class="fg"><label>${amtLabel()}</label><input type="number" class="item-amount" placeholder="0.00" min="0" step="0.01"/></div></div>`;
+  else fields = `
+    <div class="fr"><div class="fg"><label>Item / Description <span class="req">*</span></label><input class="item-detail" placeholder="What is being requested?"/></div><div class="fg"><label>Quantity</label><input type="number" class="item-qty" placeholder="1" min="1" step="1" value="1"/></div></div>
+    <div class="fr"><div class="fg"><label>Preferred Vendor / Source</label><input class="item-vendor" placeholder="Supplier, store, or link"/></div><div class="fg"><label>Needed By</label><input type="date" class="item-depdate"/></div></div>
+    <div class="fr"><div class="fg"><label>${amtLabel()}</label><input type="number" class="item-amount" placeholder="0.00" min="0" step="0.01"/></div></div>`;
 
   const div = document.createElement('div');
   div.className = 'ic';
   div.id = `item-${id}`;
   div.dataset.type = type;
+  div.dataset.category = ITEM_REQUEST_TYPES.includes(type) ? 'Item Request' : 'Travel';
   div.innerHTML = `
     <div class="ich">
-      <i class="ti ${icons[type]}" style="font-size:18px;color:var(--navy)"></i>
+      <i class="ti ${typeIcon(type)}" style="font-size:18px;color:var(--navy)"></i>
       <span class="itl">${type}</span>
       <button class="ir" onclick="document.getElementById('item-${id}').remove()" type="button"><i class="ti ti-x" style="font-size:14px"></i></button>
     </div>${fields}`;
   document.getElementById('items-container').appendChild(div);
+}
+
+// When the user flips between Purchase / Quote, refresh amount-field labels on
+// any items already added and update the helper hint.
+function onKindChange() {
+  const quote = isQuoteForm();
+  const hint = document.getElementById('kind-hint-text');
+  if (hint) hint.textContent = quote
+    ? 'A quote request is routed to procurement to gather pricing before any purchase. Amounts are optional.'
+    : 'A purchase request is routed for approval, then booked by procurement.';
+  // Re-render existing items so the required/optional amount label updates.
+  const items = [...document.querySelectorAll('#items-container .ic')].map(el => el.dataset.type);
+  document.getElementById('items-container').innerHTML = '';
+  items.forEach(t => addItem(t));
 }
 
 function toggleEEDed() {
@@ -1554,19 +1667,26 @@ function gv(id) { const el=document.getElementById(id); return el?el.value:''; }
 
 async function collectAndSubmit() {
   const travName = gv('nf-travname');
-  if (!travName.trim()) { toast('Traveler name is required.','err'); return; }
+  if (!travName.trim()) { toast('Name is required.','err'); return; }
   const itemEls = document.querySelectorAll('#items-container .ic');
   if (!itemEls.length) { toast('Add at least one item.','err'); return; }
+  const kind = gv('nf-kind') || 'Purchase Request';
+  const quote = kind === 'Quote Request';
 
   const items = [];
   let valid = true;
   itemEls.forEach(el => {
     const type = el.dataset.type;
+    const category = el.dataset.category || 'Travel';
     const amount = parseFloat(el.querySelector('.item-amount')?.value||0);
-    if (!amount) { toast('All items need an estimated amount.','err'); valid=false; return; }
+    // Amounts are required for purchase requests, optional for quote requests.
+    if (!amount && !quote) { toast('All items need an estimated amount.','err'); valid=false; return; }
+    const qty = el.querySelector('.item-qty')?.value || '';
+    let detail = el.querySelector('.item-detail,.item-dep')?.value||'';
+    if (qty && parseInt(qty,10) > 1 && detail) detail = `Qty ${qty} — ${detail}`;
     items.push({
-      type, amount,
-      detail: el.querySelector('.item-detail,.item-dep')?.value||'',
+      type, category, amount,
+      detail,
       departureLocation: el.querySelector('.item-dep')?.value||'',
       arrivalLocation: el.querySelector('.item-arr')?.value||'',
       departureDate: el.querySelector('.item-depdate')?.value||'',
@@ -1585,6 +1705,7 @@ async function collectAndSubmit() {
 
   showLoading('Submitting request...');
   await submitRequest({
+    requestKind: kind,
     branch: gv('nf-branch'),
     corpDept: gv('nf-dept'),
     travelerName: travName,
@@ -1610,11 +1731,11 @@ function openBookingPanel(reqID) {
   ov.innerHTML = `
   <div class="po" onclick="if(event.target===this)closePanel()">
     <div class="panel" style="max-width:440px">
-      <div class="ph"><i class="ti ti-check" style="font-size:20px;color:var(--ok)"></i><h2>Mark Request Booked</h2>
+      <div class="ph"><i class="ti ti-check" style="font-size:20px;color:var(--ok)"></i><h2>${isQuote(req)?'Complete Quote Request':'Mark Request Booked'}</h2>
         <button class="pc" onclick="closePanel()"><i class="ti ti-x" style="font-size:18px"></i></button></div>
       <div class="pb">
         <div class="dg" style="margin-bottom:20px">
-          <div><div class="dl">Request</div><div class="dv" style="font-weight:700">${req.id}</div></div>
+          <div><div class="dl">Request</div><div class="dv" style="font-weight:700">${req.id}${isQuote(req)?' · Quote':''}</div></div>
           <div><div class="dl">Traveler</div><div class="dv">${req.travelerName}</div></div>
           <div><div class="dl">Total</div><div class="dv amt" style="font-size:16px">${fmtAmt(req.totalAmount)}</div></div>
           <div><div class="dl">Requestor</div><div class="dv">${req.submitterName}</div></div>
@@ -1828,20 +1949,24 @@ function renderAdminPanel() {
   </div>
 
   <!-- BOTTOM: Branch Approver Assignments -->
-  <div class="sh"><h3>Branch → Approver Assignments</h3>
-    <button class="btn btn-outline btn-sm" onclick="openAddBranch()"><i class="ti ti-plus"></i> Add Branch</button>
+  <div class="sh"><h3>Branches &amp; Departments</h3>
+    <div style="display:flex;gap:8px">
+      <button class="btn btn-outline btn-sm" onclick="openAssignApprover()"><i class="ti ti-user-share"></i> Assign Approver</button>
+      <button class="btn btn-primary btn-sm" onclick="openAddBranch()"><i class="ti ti-plus"></i> Add Branch / Dept</button>
+    </div>
   </div>
   <div class="tw">
     <table>
-      <thead><tr><th>Branch</th><th>Primary Approver</th><th>Backup Approver</th><th>Status</th><th></th></tr></thead>
+      <thead><tr><th>Name</th><th>Type</th><th>Primary Approver</th><th>Backup Approver</th><th>Status</th><th></th></tr></thead>
       <tbody>
         ${_branches.map(b=>`
         <tr>
           <td><span class="btag">${b.name}</span></td>
+          <td style="font-size:12px;color:var(--muted)">${b.type||'Branch'}</td>
           <td style="font-size:13px">${b.primaryApproverEmail||'<span style="color:var(--err)">⚠ Not assigned</span>'}</td>
           <td style="font-size:13px;color:var(--muted)">${b.backupApproverEmail||'—'}</td>
           <td>${b.active==='TRUE'?'<span class="bdg b-ok">Active</span>':'<span class="bdg b-gray">Inactive</span>'}</td>
-          <td><button class="btn btn-outline btn-sm"><i class="ti ti-edit"></i> Edit</button></td>
+          <td><button class="btn btn-outline btn-sm" onclick="openEditBranch('${b.id}')"><i class="ti ti-edit"></i> Edit</button></td>
         </tr>`).join('')}
       </tbody>
     </table>
@@ -2073,8 +2198,147 @@ function filterTable(el) {
   });
 }
 
-function openAddBranch() {
-  toast('Add Branch panel coming in admin v1.1', 'warn');
+function approverOptions(selectedEmail) {
+  // Anyone who can act as an approver: Branch Approver, Super Admin, Leadership.
+  return _users
+    .filter(u => ['Branch Approver','Super Admin','Leadership'].includes(u.role))
+    .map(u => `<option value="${u.email}"${u.email===selectedEmail?' selected':''}>${u.name} (${u.role})</option>`)
+    .join('');
+}
+
+function openAddBranch() { openBranchPanel(null); }
+function openEditBranch(id) { openBranchPanel(id); }
+
+function openBranchPanel(id) {
+  const b = id ? _branches.find(x => x.id === id) : null;
+  const editing = !!b;
+  const type = (b && b.type) || 'Branch';
+  const active = b ? (b.active==='TRUE') : true;
+  const ov = document.getElementById('overlays');
+  ov.innerHTML = `
+  <div class="po" onclick="if(event.target===this)closePanel()">
+    <div class="panel" style="max-width:480px">
+      <div class="ph"><i class="ti ti-building-community" style="font-size:20px;color:var(--navy)"></i>
+        <h2>${editing ? 'Edit '+b.name : 'Add Branch / Department'}</h2>
+        <button class="pc" onclick="closePanel()"><i class="ti ti-x" style="font-size:18px"></i></button>
+      </div>
+      <div class="pb">
+        <div class="fr">
+          <div class="fg"><label>Type <span class="req">*</span></label>
+            <select id="br-type">
+              <option${type==='Branch'?' selected':''}>Branch</option>
+              <option${type==='Department'?' selected':''}>Department</option>
+            </select></div>
+          <div class="fg"><label>Status</label>
+            <select id="br-active">
+              <option value="TRUE"${active?' selected':''}>Active</option>
+              <option value="FALSE"${!active?' selected':''}>Inactive</option>
+            </select></div>
+        </div>
+        <div class="fr full"><div class="fg"><label>Name <span class="req">*</span></label>
+          <input id="br-name" value="${b?b.name:''}" placeholder="e.g. Baton Rouge or Safety Dept"/></div></div>
+        <div class="fr full"><div class="fg"><label>Primary Approver</label>
+          <select id="br-primary"><option value="">— None —</option>${approverOptions(b?b.primaryApproverEmail:'')}</select>
+          <span class="hint">Receives approval requests for this ${type.toLowerCase()}.</span></div></div>
+        <div class="fr full"><div class="fg"><label>Backup Approver</label>
+          <select id="br-backup"><option value="">— None —</option>${approverOptions(b?b.backupApproverEmail:'')}</select></div></div>
+      </div>
+      <div class="pf">
+        <button class="btn btn-outline" onclick="closePanel()">Cancel</button>
+        <button class="btn btn-primary" onclick="saveBranch(${editing?`'${b.id}'`:'null'})"><i class="ti ti-device-floppy"></i> ${editing?'Save Changes':'Add'}</button>
+      </div>
+    </div>
+  </div>`;
+}
+
+async function saveBranch(id) {
+  const name = gv('br-name').trim();
+  if (!name) { toast('Name is required.','err'); return; }
+  const type = gv('br-type');
+  const active = gv('br-active');
+  const primary = gv('br-primary');
+  const backup = gv('br-backup');
+
+  showLoading('Saving...');
+  try {
+    if (id) {
+      // Edit existing — find row by id and overwrite B:F
+      const data = await sheetsGet('Branches!A:A');
+      const rows = data.values || [];
+      const idx = rows.findIndex(r => r[0] === id);
+      if (idx < 1) throw new Error('Branch not found in sheet');
+      await sheetsUpdate(`Branches!B${idx+1}:F${idx+1}`, [[name, primary, backup, active, type]]);
+      toast(`${name} updated.`,'ok');
+    } else {
+      // Guard against duplicate names
+      if (_branches.some(b => (b.name||'').toLowerCase() === name.toLowerCase())) {
+        hideLoading(); toast('A branch/department with that name already exists.','err'); return;
+      }
+      await appendRow('Branches', [genID('B'), name, primary, backup, active, type]);
+      toast(`${name} added.`,'ok');
+    }
+  } catch(e) {
+    hideLoading(); toast('Save failed: ' + e.message, 'err'); return;
+  }
+  closePanel();
+  await navigate(currentPage);
+}
+
+// Assign one approver to many branches at once (issue: multi-branch approver).
+function openAssignApprover() {
+  const ov = document.getElementById('overlays');
+  const branches = _branches.filter(b => b.active==='TRUE');
+  ov.innerHTML = `
+  <div class="po" onclick="if(event.target===this)closePanel()">
+    <div class="panel" style="max-width:480px">
+      <div class="ph"><i class="ti ti-user-share" style="font-size:20px;color:var(--navy)"></i>
+        <h2>Assign Approver to Branches</h2>
+        <button class="pc" onclick="closePanel()"><i class="ti ti-x" style="font-size:18px"></i></button>
+      </div>
+      <div class="pb">
+        <div class="fr full"><div class="fg"><label>Approver <span class="req">*</span></label>
+          <select id="aa-approver"><option value="">— Select approver —</option>${approverOptions('')}</select></div></div>
+        <div class="fr full"><div class="fg">
+          <label>Branches / Departments to assign <span class="req">*</span></label>
+          <div style="display:flex;flex-wrap:wrap;gap:8px;padding:10px;border:1px solid var(--border);border-radius:7px;background:var(--bg);max-height:240px;overflow-y:auto">
+            ${branches.map(b=>`<label style="display:flex;align-items:center;gap:5px;font-size:12px;cursor:pointer;font-weight:400;white-space:nowrap">
+              <input type="checkbox" class="aa-branch-cb" value="${b.id}" style="width:auto;padding:0;border:none"> ${b.name}${b.primaryApproverEmail?` <span style="color:var(--muted)">· now: ${b.primaryApproverEmail}</span>`:''}
+            </label>`).join('')}
+          </div>
+          <span class="hint">Sets the selected person as Primary Approver for every checked branch.</span>
+        </div></div>
+      </div>
+      <div class="pf">
+        <button class="btn btn-outline" onclick="closePanel()">Cancel</button>
+        <button class="btn btn-primary" onclick="saveAssignApprover()"><i class="ti ti-check"></i> Assign</button>
+      </div>
+    </div>
+  </div>`;
+}
+
+async function saveAssignApprover() {
+  const email = gv('aa-approver');
+  if (!email) { toast('Choose an approver.','err'); return; }
+  const ids = [...document.querySelectorAll('.aa-branch-cb:checked')].map(c=>c.value);
+  if (!ids.length) { toast('Select at least one branch.','err'); return; }
+
+  showLoading('Assigning approver...');
+  try {
+    const data = await sheetsGet('Branches!A:A');
+    const rows = data.values || [];
+    for (const id of ids) {
+      const idx = rows.findIndex(r => r[0] === id);
+      if (idx < 1) continue;
+      // Column C = primaryApproverEmail
+      await sheetsUpdate(`Branches!C${idx+1}`, [[email]]);
+    }
+    const who = _users.find(u=>u.email===email);
+    toast(`${who?who.name:email} assigned to ${ids.length} branch${ids.length>1?'es':''}.`,'ok');
+  } catch(e) {
+    hideLoading(); toast('Assignment failed: ' + e.message, 'err'); return;
+  }
+  closePanel();
+  await navigate(currentPage);
 }
 
 // ═══════════════════════════════════════════════════════════
