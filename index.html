@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Savard Group — Procurement Portal</title>
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@latest/tabler-icons.min.css">
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 
 <!-- ============================================================
   CONFIGURATION — edit these two values before deploying
@@ -23,7 +24,7 @@
       "https://www.googleapis.com/auth/userinfo.profile",
     ].join(" "),
     LEADERSHIP_THRESHOLD: 400,   // overwritten from Settings sheet on load
-    VERSION: "3.1.0",
+    VERSION: "3.2.0",
   };
 </script>
 
@@ -608,7 +609,7 @@ async function loadAllData() {
   showLoading('Loading data...');
   try {
     const [rRes, iRes, aRes, uRes, bRes] = await Promise.all([
-      sheetsGet('Requests!A2:U2000'),
+      sheetsGet('Requests!A2:V2000'),
       sheetsGet('OrderItems!A2:V2000'),
       sheetsGet('Approvals!A2:I2000'),
       sheetsGet('Users!A2:J500'),
@@ -625,7 +626,7 @@ async function loadAllData() {
   hideLoading();
 }
 
-const REQUEST_KEYS  = ['id','submittedAt','submitterName','submitterEmail','branch','corpDept','travelerName','travelerID','travelerEmail','travelerDOB','govIDLink','totalAmount','status','needsLeadership','customerName','customerPO','paymentMethod','customerBilled','eeDeduction','comments','requestKind'];
+const REQUEST_KEYS  = ['id','submittedAt','submitterName','submitterEmail','branch','corpDept','travelerName','travelerID','travelerEmail','travelerDOB','govIDLink','totalAmount','status','needsLeadership','customerName','customerPO','paymentMethod','customerBilled','eeDeduction','comments','requestKind','link'];
 const ITEM_KEYS     = ['id','requestID','purchaseType','itemType','detail','departureDate','departureLocation','arrivalLocation','tripType','checkInDate','checkOutDate','guestName','guestDOB','cityOfStay','pickupLocation','dropoffLocation','preferredVendor','estimatedAmount','purchaseAmount','purchaseDate','confirmationDocLink','receiptFileLink'];
 const APPROVAL_KEYS = ['id','requestID','step','approverName','approverEmail','decision','decidedAt','note','notificationSent'];
 const USER_KEYS     = ['id','name','email','role','branches','primaryBranch','approverEmail','active','createdAt','notes'];
@@ -1043,15 +1044,19 @@ function renderApprovalRules() {
   </div>`;
 }
 
-function renderReports() {
-  // Branch Approvers see spend for only the branches they cover, always broken
-  // down by branch. Everyone else (Finance, Leadership, Procurement Admin,
-  // Super Admin) sees the full company-wide view.
+// Shared scoping for the Reports view and the Excel export. Branch Approvers see
+// only the branches they cover; everyone else sees the full company-wide data.
+function getReportScope() {
   const scoped = CURRENT_USER.role === 'Branch Approver';
   const myBranches = getApproverBranches();
   const reqs = scoped ? _requests.filter(r => myBranches.includes(r.branch)) : _requests;
   const reqIds = new Set(reqs.map(r => r.id));
   const items = scoped ? _items.filter(i => reqIds.has(i.requestID)) : _items;
+  return { scoped, myBranches, reqs, items };
+}
+
+function renderReports() {
+  const { scoped, myBranches, reqs, items } = getReportScope();
 
   const byBranch = {};
   reqs.forEach(r => {
@@ -1076,6 +1081,9 @@ function renderReports() {
     : 'Spend by Branch';
 
   return `
+  <div class="sh"><h3>Spend Reports</h3>
+    <button class="btn btn-primary btn-sm" onclick="exportReportsToExcel()"><i class="ti ti-file-spreadsheet"></i> Save to Excel</button>
+  </div>
   ${scoped ? `<div class="infobox info" style="margin-bottom:16px">
     <i class="ti ti-info-circle" style="font-size:16px;flex-shrink:0;margin-top:1px"></i>
     <div>Showing spend for the branch${myBranches.length>1?'es':''} you approve for: <strong>${myBranches.join(', ')||'—'}</strong>.</div>
@@ -1122,6 +1130,80 @@ function renderReports() {
   </div>`;
 }
 
+// Export the (scoped) report data to a multi-sheet Excel workbook.
+function exportReportsToExcel() {
+  if (typeof XLSX === 'undefined') {
+    toast('Excel library not loaded — check your internet connection and retry.','err');
+    return;
+  }
+  try {
+    const { scoped, myBranches, reqs, items } = getReportScope();
+    const n = v => parseFloat(v)||0;
+
+    // Sheet 1 — Requests (one row per request, with item types summarized)
+    const reqRows = reqs.map(r => {
+      const its = getRequestItems(r.id);
+      return {
+        'Request ID': r.id,
+        'Submitted': fmtDate(r.submittedAt),
+        'Submitted By': r.submitterName,
+        'Branch / Dept': r.branch,
+        'Corp Dept': r.corpDept,
+        'Kind': r.requestKind || 'Purchase Request',
+        'Type(s)': its.map(i=>i.itemType).join(', '),
+        'For': r.travelerName,
+        'Status': r.status,
+        'Total': n(r.totalAmount),
+        'Payment Method': r.paymentMethod,
+        'Customer Billed': r.customerBilled,
+        'EE Deduction': r.eeDeduction,
+        'Link': r.link || '',
+        'Comments': r.comments || ''
+      };
+    });
+
+    // Sheet 2 — Spend by Branch
+    const byBranch = {};
+    reqs.forEach(r => { byBranch[r.branch] = (byBranch[r.branch]||0) + n(r.totalAmount); });
+    if (scoped) myBranches.forEach(b => { if (byBranch[b]===undefined) byBranch[b]=0; });
+    const branchRows = Object.entries(byBranch).sort((a,b)=>b[1]-a[1])
+      .map(([b,v]) => ({ 'Branch / Dept': b||'Unknown', 'Total Spend': v }));
+
+    // Sheet 3 — Spend by Type
+    const byType = {};
+    items.forEach(i => { byType[i.itemType] = (byType[i.itemType]||0) + n(i.estimatedAmount); });
+    const typeRows = Object.entries(byType).sort((a,b)=>b[1]-a[1])
+      .map(([t,v]) => ({ 'Type': t, 'Total Spend': v }));
+
+    // Sheet 4 — Summary
+    const travelTypes = ['Flight','Hotel','Car Rental','Bus'];
+    const totalSpend = reqs.reduce((s,r)=>s+n(r.totalAmount),0);
+    const travelSpend = travelTypes.reduce((s,t)=>s+(byType[t]||0),0);
+    const itemSpend = Object.entries(byType).filter(([t])=>!travelTypes.includes(t)).reduce((s,[,v])=>s+v,0);
+    const summaryRows = [
+      { Metric:'Report Scope', Value: scoped ? `Branches: ${myBranches.join(', ')}` : 'Company-wide' },
+      { Metric:'Generated', Value: new Date().toLocaleString('en-US') },
+      { Metric:'Total Requests', Value: reqs.length },
+      { Metric:'Total Spend', Value: totalSpend },
+      { Metric:'Travel Spend', Value: travelSpend },
+      { Metric:'Item Request Spend', Value: itemSpend },
+      { Metric:'Quote Requests', Value: reqs.filter(r=>isQuote(r)).length },
+    ];
+
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(summaryRows), 'Summary');
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(reqRows.length?reqRows:[{Note:'No requests'}]), 'Requests');
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(branchRows.length?branchRows:[{Note:'No data'}]), 'Spend by Branch');
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(typeRows.length?typeRows:[{Note:'No data'}]), 'Spend by Type');
+
+    const today = new Date().toISOString().slice(0,10);
+    XLSX.writeFile(wb, `Savard_Procurement_Report_${today}.xlsx`);
+    toast('Report exported to Excel.','ok');
+  } catch (e) {
+    toast('Export failed: ' + e.message, 'err');
+  }
+}
+
 // ═══════════════════════════════════════════════════════════
 //  ACTIONS
 // ═══════════════════════════════════════════════════════════
@@ -1131,14 +1213,14 @@ async function submitRequest(formData) {
   const total = formData.items.reduce((s,i)=>s+(parseFloat(i.amount)||0),0);
   const needsLeadership = total >= CONFIG.LEADERSHIP_THRESHOLD;
 
-  // Write Request row (column U = requestKind)
+  // Write Request row (column U = requestKind, column V = link)
   await appendRow('Requests', [
     reqID, new Date().toISOString(), CURRENT_USER.name, CURRENT_USER.email,
     formData.branch, formData.corpDept, formData.travelerName, formData.travelerID,
     formData.travelerEmail, formData.travelerDOB, formData.govIDLink,
     total.toFixed(2), 'Pending Approval', needsLeadership?'YES':'NO',
     formData.customerName, formData.customerPO, formData.paymentMethod,
-    formData.customerBilled, formData.eeDeduction, formData.comments, kind
+    formData.customerBilled, formData.eeDeduction, formData.comments, kind, formData.link||''
   ]);
 
   // Write each item — purchaseType holds the category (Travel / Item Request),
@@ -1419,11 +1501,12 @@ function openRequestDetail(reqID) {
           </div>
         </div>
 
-        ${req.govIDLink?`
+        ${(req.govIDLink||req.link)?`
         <div class="fs-sec">
-          <div class="fs-title">Documents</div>
+          <div class="fs-title">Links &amp; Documents</div>
           <div style="display:flex;flex-wrap:wrap;gap:8px">
-            <a class="dl-link" href="${req.govIDLink}" target="_blank"><i class="ti ti-id" style="font-size:12px"></i>Gov ID</a>
+            ${req.link?`<a class="dl-link" href="${req.link}" target="_blank"><i class="ti ti-link" style="font-size:12px"></i>Link</a>`:''}
+            ${req.govIDLink?`<a class="dl-link" href="${req.govIDLink}" target="_blank"><i class="ti ti-id" style="font-size:12px"></i>Gov ID</a>`:''}
             ${items.filter(i=>i.confirmationDocLink).map(i=>`<a class="dl-link" href="${i.confirmationDocLink}" target="_blank"><i class="ti ti-file-text" style="font-size:12px"></i>Confirmation</a>`).join('')}
             ${items.filter(i=>i.receiptFileLink).map(i=>`<a class="dl-link" href="${i.receiptFileLink}" target="_blank"><i class="ti ti-receipt" style="font-size:12px"></i>Receipt</a>`).join('')}
           </div>
@@ -1523,6 +1606,11 @@ function openNewRequest() {
               <select id="nf-branch">${CURRENT_USER.branches.map(b=>`<option>${b}</option>`).join('')}${branches}</select></div>
             <div class="fg"><label>Corp Dept</label>
               <select id="nf-dept"><option>BRANCH</option><option>EXEC</option><option>SALES</option><option>SAFETY</option><option>STAPI</option><option>Corp</option><option>Site</option></select></div>
+          </div>
+          <div class="fr full">
+            <div class="fg"><label>Link</label>
+              <input id="nf-link" type="url" placeholder="https://... (product page, listing, doc, etc.)"/>
+              <span class="hint">Optional reference link for this request</span></div>
           </div>
         </div>
         <div id="nf-dynamic"></div>
@@ -1723,6 +1811,7 @@ async function collectAndSubmit() {
     customerName: gv('nf-custname'),
     customerPO: gv('nf-custpo'),
     comments: gv('nf-comments'),
+    link: gv('nf-link'),
     items: [item],
   });
   hideLoading();
