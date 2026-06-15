@@ -23,7 +23,7 @@
       "https://www.googleapis.com/auth/userinfo.profile",
     ].join(" "),
     LEADERSHIP_THRESHOLD: 400,   // overwritten from Settings sheet on load
-    VERSION: "3.0.0",
+    VERSION: "3.1.0",
   };
 </script>
 
@@ -1486,12 +1486,29 @@ function openNewRequest() {
       </div>
       <div class="pb">
         <div class="fs-sec">
-          <div class="fs-title">Request Type</div>
+          <div class="fs-title">What do you need?</div>
           <div class="fr">
-            <div class="fg"><label>What are you submitting? <span class="req">*</span></label>
+            <div class="fg"><label>Request Type <span class="req">*</span></label>
+              <select id="nf-type" onchange="onTypeChange()">
+                <optgroup label="Travel">
+                  <option value="Flight">Flight</option>
+                  <option value="Hotel">Hotel</option>
+                  <option value="Car Rental">Car Rental</option>
+                  <option value="Bus">Bus</option>
+                </optgroup>
+                <optgroup label="Item Request">
+                  <option value="Transportation">Transportation</option>
+                  <option value="Housing">Housing</option>
+                  <option value="PPE">PPE</option>
+                  <option value="Office Supplies">Office Supplies</option>
+                  <option value="Tech">Tech</option>
+                  <option value="Miscellaneous">Miscellaneous</option>
+                </optgroup>
+              </select></div>
+            <div class="fg"><label>Purchase or Quote? <span class="req">*</span></label>
               <select id="nf-kind" onchange="onKindChange()">
-                <option value="Purchase Request">Purchase Request — buy/book now</option>
-                <option value="Quote Request">Request for Quote — get pricing first</option>
+                <option value="Purchase Request">Purchase — buy/book now</option>
+                <option value="Quote Request">Quote — get pricing first</option>
               </select></div>
           </div>
           <div class="infobox info" id="kind-hint" style="margin-top:4px">
@@ -1507,49 +1524,10 @@ function openNewRequest() {
             <div class="fg"><label>Corp Dept</label>
               <select id="nf-dept"><option>BRANCH</option><option>EXEC</option><option>SALES</option><option>SAFETY</option><option>STAPI</option><option>Corp</option><option>Site</option></select></div>
           </div>
-          <div class="fr">
-            <div class="fg"><label>Requestor Name</label><input id="nf-reqname" value="${CURRENT_USER.name}" readonly style="background:var(--bg)"/></div>
-            <div class="fg"><label>Requestor Email</label><input id="nf-reqemail" value="${CURRENT_USER.email}" readonly style="background:var(--bg)"/></div>
-          </div>
         </div>
-        <div class="fs-sec">
-          <div class="fs-title">For (Employee / Traveler / Recipient)</div>
-          <div class="fr">
-            <div class="fg"><label>Full Name <span class="req">*</span></label><input id="nf-travname" placeholder="Who this request is for"/></div>
-            <div class="fg"><label>Employee ID</label><input id="nf-travid" placeholder="EE ID if applicable"/></div>
-          </div>
-          <div class="fr">
-            <div class="fg"><label>Traveler Email</label><input id="nf-travemail" type="email" placeholder="For confirmation email"/></div>
-            <div class="fg"><label>Date of Birth</label><input id="nf-travdob" type="date"/></div>
-          </div>
-          <div class="fr full">
-            <div class="fg"><label>Gov ID (Google Drive Link)</label>
-              <input id="nf-govid" type="url" placeholder="https://drive.google.com/..."/>
-              <span class="hint">Upload Gov ID to Google Drive, set sharing to "Anyone with link", paste here</span></div>
-          </div>
-        </div>
-        <div class="fs-sec">
-          <div class="fs-title">Request Items</div>
-          <div id="items-container"></div>
-          <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--muted);margin:6px 0 6px">Travel</div>
-          <div class="air">
-            <button class="aib" onclick="addItem('Flight')"><i class="ti ti-plane"></i> Flight</button>
-            <button class="aib" onclick="addItem('Hotel')"><i class="ti ti-building"></i> Hotel</button>
-            <button class="aib" onclick="addItem('Car Rental')"><i class="ti ti-car"></i> Car Rental</button>
-            <button class="aib" onclick="addItem('Bus')"><i class="ti ti-bus"></i> Bus</button>
-          </div>
-          <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--muted);margin:14px 0 6px">Item Request</div>
-          <div class="air">
-            <button class="aib" onclick="addItem('Transportation')"><i class="ti ti-truck-delivery"></i> Transportation</button>
-            <button class="aib" onclick="addItem('Housing')"><i class="ti ti-home"></i> Housing</button>
-            <button class="aib" onclick="addItem('PPE')"><i class="ti ti-shield-check"></i> PPE</button>
-            <button class="aib" onclick="addItem('Office Supplies')"><i class="ti ti-paperclip"></i> Office Supplies</button>
-            <button class="aib" onclick="addItem('Tech')"><i class="ti ti-device-laptop"></i> Tech</button>
-            <button class="aib" onclick="addItem('Miscellaneous')"><i class="ti ti-package"></i> Miscellaneous</button>
-          </div>
-        </div>
-        <div class="fs-sec">
-          <div class="fs-title">Billing & Deductions</div>
+        <div id="nf-dynamic"></div>
+        <div class="fs-sec" id="nf-billing">
+          <div class="fs-title">Billing &amp; Deductions</div>
           <div class="fr">
             <div class="fg"><label>Payment Method</label>
               <select id="nf-payment"><option>Card Payment</option><option>Invoiced</option><option>In Stock</option></select></div>
@@ -1587,7 +1565,8 @@ function openNewRequest() {
       </div>
     </div>
   </div>`;
-  addItem('Flight'); // Add one default item
+  renderRequestFields();   // build fields for the default type
+  onKindChange();          // set hint + billing visibility for default kind
 }
 
 // Item categories that use the generic (non-travel) field set.
@@ -1604,57 +1583,88 @@ function amtLabel() {
     : 'Estimated Amount ($) <span class="req">*</span>';
 }
 
-function addItem(type) {
-  const id = itemCount++;
-  const quote = isQuoteForm();
-  let fields = '';
-  if (type==='Flight') fields = `
+// Person/recipient block — full set for travel, lean for item requests.
+function personFieldsFor(type) {
+  if (ITEM_REQUEST_TYPES.includes(type)) {
+    return `
+      <div class="fr">
+        <div class="fg"><label>For (Name) <span class="req">*</span></label><input id="nf-travname" placeholder="Who this request is for"/></div>
+        <div class="fg"><label>Employee ID</label><input id="nf-travid" placeholder="EE ID if applicable"/></div>
+      </div>`;
+  }
+  return `
+      <div class="fr">
+        <div class="fg"><label>Traveler Full Name <span class="req">*</span></label><input id="nf-travname" placeholder="Legal name as on ID"/></div>
+        <div class="fg"><label>Employee ID</label><input id="nf-travid" placeholder="EE ID if applicable"/></div>
+      </div>
+      <div class="fr">
+        <div class="fg"><label>Traveler Email</label><input id="nf-travemail" type="email" placeholder="For confirmation email"/></div>
+        <div class="fg"><label>Date of Birth</label><input id="nf-travdob" type="date"/></div>
+      </div>
+      <div class="fr full">
+        <div class="fg"><label>Gov ID (Google Drive Link)</label>
+          <input id="nf-govid" type="url" placeholder="https://drive.google.com/..."/>
+          <span class="hint">Upload to Drive, set "Anyone with link", paste here</span></div>
+      </div>`;
+}
+
+// Item detail fields specific to the selected type.
+function itemFieldsFor(type) {
+  if (type==='Flight') return `
     <div class="fr"><div class="fg"><label>Departure Airport <span class="req">*</span></label><input class="item-dep" placeholder="e.g. BTR (Baton Rouge)"/></div><div class="fg"><label>Arrival Airport <span class="req">*</span></label><input class="item-arr" placeholder="e.g. BGR (Bangor)"/></div></div>
     <div class="fr"><div class="fg"><label>Departure Date</label><input type="date" class="item-depdate"/></div><div class="fg"><label>Trip Type</label><select class="item-triptype"><option>One Way</option><option>Round Trip</option></select></div></div>
     <div class="fr"><div class="fg"><label>Preferred Airline / Site</label><input class="item-vendor" placeholder="Expedia, American Airlines..."/></div><div class="fg"><label>${amtLabel()}</label><input type="number" class="item-amount" placeholder="0.00" min="0" step="0.01"/></div></div>`;
-  else if (type==='Hotel') fields = `
+  if (type==='Hotel') return `
     <div class="fr"><div class="fg"><label>Hotel Name <span class="req">*</span></label><input class="item-detail" placeholder="Hotel name or address"/></div><div class="fg"><label>City of Stay</label><input class="item-city" placeholder="City, State"/></div></div>
     <div class="fr"><div class="fg"><label>Guest Full Name</label><input class="item-guestname" placeholder="Name as on booking"/></div><div class="fg"><label>Guest DOB</label><input type="date" class="item-guestdob"/></div></div>
     <div class="fr"><div class="fg"><label>Check-in</label><input type="date" class="item-checkin"/></div><div class="fg"><label>Check-out</label><input type="date" class="item-checkout"/></div></div>
     <div class="fr"><div class="fg"><label>${amtLabel()}</label><input type="number" class="item-amount" placeholder="0.00" min="0" step="0.01"/></div></div>`;
-  else if (type==='Car Rental') fields = `
+  if (type==='Car Rental') return `
     <div class="fr"><div class="fg"><label>Pickup Location <span class="req">*</span></label><input class="item-pickup" placeholder="City or address"/></div><div class="fg"><label>Drop-off Location</label><input class="item-dropoff" placeholder="City or address"/></div></div>
     <div class="fr"><div class="fg"><label>Pickup Date</label><input type="date" class="item-depdate"/></div><div class="fg"><label>Drop-off Date</label><input type="date" class="item-checkout"/></div></div>
     <div class="fr"><div class="fg"><label>Preferred Vendor</label><input class="item-vendor" placeholder="Enterprise, Hertz..."/></div><div class="fg"><label>${amtLabel()}</label><input type="number" class="item-amount" placeholder="0.00" min="0" step="0.01"/></div></div>`;
-  else if (type==='Bus') fields = `
+  if (type==='Bus') return `
     <div class="fr"><div class="fg"><label>Departure City</label><input class="item-dep" placeholder="Origin"/></div><div class="fg"><label>Arrival City</label><input class="item-arr" placeholder="Destination"/></div></div>
     <div class="fr"><div class="fg"><label>Departure Date</label><input type="date" class="item-depdate"/></div><div class="fg"><label>${amtLabel()}</label><input type="number" class="item-amount" placeholder="0.00" min="0" step="0.01"/></div></div>`;
-  else fields = `
+  // Generic item request
+  return `
     <div class="fr"><div class="fg"><label>Item / Description <span class="req">*</span></label><input class="item-detail" placeholder="What is being requested?"/></div><div class="fg"><label>Quantity</label><input type="number" class="item-qty" placeholder="1" min="1" step="1" value="1"/></div></div>
     <div class="fr"><div class="fg"><label>Preferred Vendor / Source</label><input class="item-vendor" placeholder="Supplier, store, or link"/></div><div class="fg"><label>Needed By</label><input type="date" class="item-depdate"/></div></div>
     <div class="fr"><div class="fg"><label>${amtLabel()}</label><input type="number" class="item-amount" placeholder="0.00" min="0" step="0.01"/></div></div>`;
-
-  const div = document.createElement('div');
-  div.className = 'ic';
-  div.id = `item-${id}`;
-  div.dataset.type = type;
-  div.dataset.category = ITEM_REQUEST_TYPES.includes(type) ? 'Item Request' : 'Travel';
-  div.innerHTML = `
-    <div class="ich">
-      <i class="ti ${typeIcon(type)}" style="font-size:18px;color:var(--navy)"></i>
-      <span class="itl">${type}</span>
-      <button class="ir" onclick="document.getElementById('item-${id}').remove()" type="button"><i class="ti ti-x" style="font-size:14px"></i></button>
-    </div>${fields}`;
-  document.getElementById('items-container').appendChild(div);
 }
 
-// When the user flips between Purchase / Quote, refresh amount-field labels on
-// any items already added and update the helper hint.
+// Rebuild the dynamic part of the form for the selected type.
+function renderRequestFields() {
+  const type = gv('nf-type') || 'Flight';
+  const isItem = ITEM_REQUEST_TYPES.includes(type);
+  const dyn = document.getElementById('nf-dynamic');
+  if (!dyn) return;
+  dyn.innerHTML = `
+    <div class="fs-sec">
+      <div class="fs-title">${isItem ? 'For' : 'Traveler / Employee'}</div>
+      ${personFieldsFor(type)}
+    </div>
+    <div class="fs-sec">
+      <div class="fs-title"><i class="ti ${typeIcon(type)}" style="font-size:16px;color:var(--navy);vertical-align:-2px"></i> ${type} Details</div>
+      ${itemFieldsFor(type)}
+    </div>`;
+}
+
+// Type changed — rebuild the dynamic fields entirely.
+function onTypeChange() { renderRequestFields(); }
+
+// Kind changed (Purchase vs Quote) — update hint, show/hide billing, and refresh
+// the amount-field label in place (keeps any values the user already typed).
 function onKindChange() {
   const quote = isQuoteForm();
   const hint = document.getElementById('kind-hint-text');
   if (hint) hint.textContent = quote
     ? 'A quote request is routed to procurement to gather pricing before any purchase. Amounts are optional.'
     : 'A purchase request is routed for approval, then booked by procurement.';
-  // Re-render existing items so the required/optional amount label updates.
-  const items = [...document.querySelectorAll('#items-container .ic')].map(el => el.dataset.type);
-  document.getElementById('items-container').innerHTML = '';
-  items.forEach(t => addItem(t));
+  const billing = document.getElementById('nf-billing');
+  if (billing) billing.style.display = quote ? 'none' : '';
+  const amt = document.querySelector('#nf-dynamic .item-amount');
+  if (amt) { const lbl = amt.closest('.fg').querySelector('label'); if (lbl) lbl.innerHTML = amtLabel(); }
 }
 
 function toggleEEDed() {
@@ -1668,40 +1678,34 @@ function gv(id) { const el=document.getElementById(id); return el?el.value:''; }
 async function collectAndSubmit() {
   const travName = gv('nf-travname');
   if (!travName.trim()) { toast('Name is required.','err'); return; }
-  const itemEls = document.querySelectorAll('#items-container .ic');
-  if (!itemEls.length) { toast('Add at least one item.','err'); return; }
   const kind = gv('nf-kind') || 'Purchase Request';
   const quote = kind === 'Quote Request';
+  const type = gv('nf-type') || 'Flight';
+  const category = ITEM_REQUEST_TYPES.includes(type) ? 'Item Request' : 'Travel';
+  const root = document.getElementById('nf-dynamic');
 
-  const items = [];
-  let valid = true;
-  itemEls.forEach(el => {
-    const type = el.dataset.type;
-    const category = el.dataset.category || 'Travel';
-    const amount = parseFloat(el.querySelector('.item-amount')?.value||0);
-    // Amounts are required for purchase requests, optional for quote requests.
-    if (!amount && !quote) { toast('All items need an estimated amount.','err'); valid=false; return; }
-    const qty = el.querySelector('.item-qty')?.value || '';
-    let detail = el.querySelector('.item-detail,.item-dep')?.value||'';
-    if (qty && parseInt(qty,10) > 1 && detail) detail = `Qty ${qty} — ${detail}`;
-    items.push({
-      type, category, amount,
-      detail,
-      departureLocation: el.querySelector('.item-dep')?.value||'',
-      arrivalLocation: el.querySelector('.item-arr')?.value||'',
-      departureDate: el.querySelector('.item-depdate')?.value||'',
-      tripType: el.querySelector('.item-triptype')?.value||'One Way',
-      checkIn: el.querySelector('.item-checkin')?.value||'',
-      checkOut: el.querySelector('.item-checkout')?.value||'',
-      guestName: el.querySelector('.item-guestname')?.value||'',
-      guestDOB: el.querySelector('.item-guestdob')?.value||'',
-      cityOfStay: el.querySelector('.item-city')?.value||'',
-      pickupLocation: el.querySelector('.item-pickup')?.value||'',
-      dropoffLocation: el.querySelector('.item-dropoff')?.value||'',
-      vendor: el.querySelector('.item-vendor')?.value||'',
-    });
-  });
-  if (!valid) return;
+  const amount = parseFloat(root.querySelector('.item-amount')?.value||0);
+  // Amount is required for purchase requests, optional for quote requests.
+  if (!amount && !quote) { toast('An estimated amount is required.','err'); return; }
+  const qty = root.querySelector('.item-qty')?.value || '';
+  let detail = root.querySelector('.item-detail,.item-dep')?.value||'';
+  if (qty && parseInt(qty,10) > 1 && detail) detail = `Qty ${qty} — ${detail}`;
+
+  const item = {
+    type, category, amount, detail,
+    departureLocation: root.querySelector('.item-dep')?.value||'',
+    arrivalLocation: root.querySelector('.item-arr')?.value||'',
+    departureDate: root.querySelector('.item-depdate')?.value||'',
+    tripType: root.querySelector('.item-triptype')?.value||'One Way',
+    checkIn: root.querySelector('.item-checkin')?.value||'',
+    checkOut: root.querySelector('.item-checkout')?.value||'',
+    guestName: root.querySelector('.item-guestname')?.value||'',
+    guestDOB: root.querySelector('.item-guestdob')?.value||'',
+    cityOfStay: root.querySelector('.item-city')?.value||'',
+    pickupLocation: root.querySelector('.item-pickup')?.value||'',
+    dropoffLocation: root.querySelector('.item-dropoff')?.value||'',
+    vendor: root.querySelector('.item-vendor')?.value||'',
+  };
 
   showLoading('Submitting request...');
   await submitRequest({
@@ -1719,7 +1723,7 @@ async function collectAndSubmit() {
     customerName: gv('nf-custname'),
     customerPO: gv('nf-custpo'),
     comments: gv('nf-comments'),
-    items,
+    items: [item],
   });
   hideLoading();
 }
