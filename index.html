@@ -24,7 +24,8 @@
       "https://www.googleapis.com/auth/userinfo.profile",
     ].join(" "),
     LEADERSHIP_THRESHOLD: 400,   // overwritten from Settings sheet on load
-    VERSION: "3.3.0",
+    NOTIFY_FROM: "stapiadmin@savardgroup.net",  // From: for admin notifications (must be a verified "Send mail as" alias on the sender's Gmail)
+    VERSION: "3.3.2",
   };
 </script>
 
@@ -549,16 +550,20 @@ function genID(prefix) {
 // ═══════════════════════════════════════════════════════════
 //  GMAIL SEND HELPER
 // ═══════════════════════════════════════════════════════════
-async function sendEmail(to, subject, htmlBody) {
+async function sendEmail(to, subject, htmlBody, from) {
   try {
-    const msg = [
-      'To: ' + to,
+    const headers = ['To: ' + to];
+    // Gmail only honors a From header that is the sender's own address or a
+    // verified "Send mail as" alias on their account; otherwise it sends as the
+    // authenticated user regardless of what we put here.
+    if (from) headers.push('From: ' + from);
+    const msg = headers.concat([
       'Subject: ' + subject,
       'MIME-Version: 1.0',
       'Content-Type: text/html; charset=utf-8',
       '',
       htmlBody
-    ].join('\r\n');
+    ]).join('\r\n');
     const encoded = btoa(unescape(encodeURIComponent(msg)))
       .replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
     await gFetch('https://gmail.googleapis.com/gmail/v1/users/me/messages/send', {
@@ -1707,11 +1712,9 @@ function openNewRequest() {
         </div>
         <div class="fs-sec">
           <div class="fs-title">Request Info</div>
-          <div class="fr">
+          <div class="fr full">
             <div class="fg"><label>Branch / Department <span class="req">*</span></label>
               <select id="nf-branch">${CURRENT_USER.branches.map(b=>`<option>${b}</option>`).join('')}${branches}</select></div>
-            <div class="fg"><label>Corp Dept</label>
-              <select id="nf-dept"><option>BRANCH</option><option>EXEC</option><option>SALES</option><option>SAFETY</option><option>STAPI</option><option>Corp</option><option>Site</option></select></div>
           </div>
           <div class="fr full">
             <div class="fg"><label>Link</label>
@@ -1905,7 +1908,7 @@ async function collectAndSubmit() {
   await submitRequest({
     requestKind: kind,
     branch: gv('nf-branch'),
-    corpDept: gv('nf-dept'),
+    corpDept: '',
     travelerName: travName,
     travelerID: gv('nf-travid'),
     travelerEmail: gv('nf-travemail'),
@@ -2371,8 +2374,9 @@ async function saveEditUser(email) {
         </table>
         ${reactivated?`<p style="font-size:14px;color:#059669;font-weight:600;margin-bottom:16px">Your account has been reactivated.</p>`:''}
         <a href="${portalURL}" style="display:inline-block;background:#0f1f3d;color:#fff;padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:600;font-size:14px">Open Procurement Portal →</a>`,
-        `If you have questions about these changes, contact ${CURRENT_USER.name} or the STAPI team.`, null
-      )
+        `If you have questions about these changes, please <a href="https://savardgroup.zendesk.com/hc/en-us/requests/new" style="color:#2563eb;font-weight:600;text-decoration:underline">submit a support ticket</a>.`, null
+      ),
+      CONFIG.NOTIFY_FROM
     );
   }
 
