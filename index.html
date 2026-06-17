@@ -24,7 +24,7 @@
       "https://www.googleapis.com/auth/userinfo.profile",
     ].join(" "),
     LEADERSHIP_THRESHOLD: 400,   // overwritten from Settings sheet on load
-    VERSION: "3.2.0",
+    VERSION: "3.3.0",
   };
 </script>
 
@@ -1076,6 +1076,24 @@ function renderReports() {
   const itemSpend = Object.entries(byType).filter(([t])=>!travelTypes.includes(t)).reduce((s,[,v])=>s+v,0);
   const quoteCount = reqs.filter(r=>isQuote(r)).length;
 
+  // QuickBooks Desktop export card — Finance / Super Admin only.
+  const isFinanceLike = ['Finance','Super Admin'].includes(CURRENT_USER.role);
+  const yearStart = new Date(new Date().getFullYear(),0,1).toISOString().slice(0,10);
+  const todayStr  = new Date().toISOString().slice(0,10);
+  const qbCard = isFinanceLike ? `
+  <div class="tw" style="padding:16px 18px;margin-bottom:18px;border-left:3px solid var(--navy)">
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">
+      <i class="ti ti-file-invoice" style="font-size:18px;color:var(--navy)"></i>
+      <strong style="font-size:14px">QuickBooks Desktop Export — Vendor Bills (A/P)</strong>
+    </div>
+    <p style="font-size:12px;color:var(--muted);margin:0 0 12px;line-height:1.5">Generates a <strong>.iif</strong> file of <strong>completed (booked)</strong> purchases as A/P vendor bills for the selected date range. Quotes are excluded. Import via QuickBooks: <em>File ▸ Utilities ▸ Import ▸ IIF Files</em>.</p>
+    <div style="display:flex;flex-wrap:wrap;gap:12px;align-items:flex-end">
+      <div class="fg" style="margin:0"><label>From</label><input type="date" id="qb-start" value="${yearStart}"/></div>
+      <div class="fg" style="margin:0"><label>To</label><input type="date" id="qb-end" value="${todayStr}"/></div>
+      <button class="btn btn-primary btn-sm" onclick="buildQuickBooksIIF()"><i class="ti ti-download"></i> Export QuickBooks Bills (.iif)</button>
+    </div>
+  </div>` : '';
+
   const branchLabel = scoped
     ? (myBranches.length>1 ? `Spend by Branch (your ${myBranches.length} branches)` : 'Spend by Branch')
     : 'Spend by Branch';
@@ -1084,6 +1102,7 @@ function renderReports() {
   <div class="sh"><h3>Spend Reports</h3>
     <button class="btn btn-primary btn-sm" onclick="exportReportsToExcel()"><i class="ti ti-file-spreadsheet"></i> Save to Excel</button>
   </div>
+  ${qbCard}
   ${scoped ? `<div class="infobox info" style="margin-bottom:16px">
     <i class="ti ti-info-circle" style="font-size:16px;flex-shrink:0;margin-top:1px"></i>
     <div>Showing spend for the branch${myBranches.length>1?'es':''} you approve for: <strong>${myBranches.join(', ')||'—'}</strong>.</div>
@@ -1202,6 +1221,93 @@ function exportReportsToExcel() {
   } catch (e) {
     toast('Export failed: ' + e.message, 'err');
   }
+}
+
+// ─── QuickBooks Desktop export ──────────────────────────────
+// Builds an IIF file of completed (booked) purchases as A/P vendor bills for a
+// chosen date range. IIF is QuickBooks Desktop's native transaction-import
+// format (File ▸ Utilities ▸ Import ▸ IIF Files). Edit the account map below to
+// match your QuickBooks chart of accounts, or QB will offer to create them.
+const QB_AP_ACCOUNT = 'Accounts Payable';
+const QB_DEFAULT_EXPENSE = 'Procurement Expenses';
+const QB_EXPENSE_BY_TYPE = {
+  'Flight':'Travel Expense', 'Hotel':'Travel Expense', 'Car Rental':'Travel Expense', 'Bus':'Travel Expense',
+  'Transportation':'Transportation', 'Housing':'Housing', 'PPE':'Safety & PPE',
+  'Office Supplies':'Office Supplies', 'Tech':'Computer & Equipment', 'Miscellaneous':'Miscellaneous'
+};
+
+function buildQuickBooksIIF() {
+  const startStr = gv('qb-start'), endStr = gv('qb-end');
+  if (!startStr || !endStr) { toast('Choose a start and end date.','err'); return; }
+  const start = new Date(startStr+'T00:00:00');
+  const end   = new Date(endStr+'T23:59:59');
+  if (start > end) { toast('Start date must be on or before end date.','err'); return; }
+
+  // IIF fields cannot contain tabs/newlines; vendor names cannot contain ':'.
+  const clean = s => String(s==null?'':s).split('\t').join(' ').split('\n').join(' ').split('\r').join(' ').trim();
+  const vname = s => clean(s).split(':').join(' -');
+  const iifDate = d => { const x=new Date(d); if(isNaN(x)) return ''; const m=x.getMonth()+1, day=x.getDate(), y=x.getFullYear(); return (m<10?'0'+m:m)+'/'+(day<10?'0'+day:day)+'/'+y; };
+  const amt = v => (parseFloat(v)||0).toFixed(2);
+
+  // Scope: completed, non-quote requests within the date range (by submission date).
+  const scope = getReportScope();
+  const rows = scope.reqs.filter(r => {
+    if (r.status !== 'Completed') return false;
+    if (isQuote(r)) return false;
+    const d = new Date(r.submittedAt);
+    return !isNaN(d) && d >= start && d <= end;
+  });
+  if (!rows.length) { toast('No completed purchases found in that date range.','warn'); return; }
+
+  const TAB='\t', NL='\r\n';
+  let out = '';
+  out += ['!TRNS','TRNSTYPE','DATE','ACCNT','NAME','AMOUNT','DOCNUM','MEMO','CLASS'].join(TAB)+NL;
+  out += ['!SPL','TRNSTYPE','DATE','ACCNT','NAME','AMOUNT','MEMO','CLASS'].join(TAB)+NL;
+  out += '!ENDTRNS'+NL;
+
+  let billCount=0, blankVendors=0;
+  rows.forEach(r => {
+    let items = getRequestItems(r.id);
+    if (!items.length) items = [{ itemType:'Miscellaneous', detail:clean(r.comments), preferredVendor:'', estimatedAmount:r.totalAmount }];
+
+    // One bill per vendor within the request.
+    const groups = {};
+    items.forEach(it => {
+      let v = vname(it.preferredVendor);
+      if (!v) { v='UNSPECIFIED VENDOR'; blankVendors++; }
+      (groups[v] = groups[v] || []).push(it);
+    });
+
+    const vendors = Object.keys(groups);
+    vendors.forEach((vendor, gi) => {
+      const lines = groups[vendor];
+      const total = lines.reduce((s,it)=>s + (parseFloat(it.purchaseAmount)||parseFloat(it.estimatedAmount)||0), 0);
+      const docnum = vendors.length>1 ? (r.id+'-'+(gi+1)) : r.id;
+      const date = iifDate(r.submittedAt);
+      const cls  = clean(r.branch);
+      const memo = clean((r.travelerName?('For '+r.travelerName+' · '):'') + (r.corpDept||'') + (r.customerPO?(' · PO '+r.customerPO):''));
+      // TRNS = A/P credit (negative); SPL = expense debit (positive). Must sum to 0.
+      out += ['TRNS','BILL',date,QB_AP_ACCOUNT,vendor,'-'+amt(total),docnum,memo,cls].join(TAB)+NL;
+      lines.forEach(it => {
+        const exp = QB_EXPENSE_BY_TYPE[it.itemType] || QB_DEFAULT_EXPENSE;
+        const lineAmt = amt(parseFloat(it.purchaseAmount)||parseFloat(it.estimatedAmount)||0);
+        const lineMemo = clean((it.itemType||'') + (it.detail?(' — '+it.detail):''));
+        out += ['SPL','BILL',date,exp,'',lineAmt,lineMemo,cls].join(TAB)+NL;
+      });
+      out += 'ENDTRNS'+NL;
+      billCount++;
+    });
+  });
+
+  // Download as .iif
+  const blob = new Blob([out], {type:'application/octet-stream'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = `Savard_QB_Bills_${startStr}_to_${endStr}.iif`;
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+
+  toast(`${billCount} bill${billCount!==1?'s':''} exported`+(blankVendors?` · ${blankVendors} line(s) had no vendor (set to UNSPECIFIED VENDOR)`:'')+'.', blankVendors?'warn':'ok');
 }
 
 // ═══════════════════════════════════════════════════════════
