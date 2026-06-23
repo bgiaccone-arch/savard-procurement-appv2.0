@@ -15,19 +15,16 @@
   ============================================================ -->
 <script>
   const CONFIG = {
-    SHEET_ID:  "18F9Ng44LN9KPpCGNI2Lk2-aDxRSdhjZi4OtxQlqZcls",
+    API_URL:   "",  // ◀ SET THIS to your deployed Cloud Function URL (Phase 1), e.g. https://us-central1-PROJECT.cloudfunctions.net/procurement-api
+    SHEET_ID:  "18F9Ng44LN9KPpCGNI2Lk2-aDxRSdhjZi4OtxQlqZcls",  // (backend only; kept for reference)
     CLIENT_ID: "348102211173-25qem3fbqq9l3r9tl7v584dnb9a9m5k8.apps.googleusercontent.com",
     SCOPES: [
-      "https://www.googleapis.com/auth/spreadsheets",
-      "https://www.googleapis.com/auth/gmail.send",
-      "https://www.googleapis.com/auth/drive.file",
+      "openid",
       "https://www.googleapis.com/auth/userinfo.email",
       "https://www.googleapis.com/auth/userinfo.profile",
     ].join(" "),
-    LEADERSHIP_THRESHOLD: 400,   // overwritten from Settings sheet on load
-    NOTIFY_FROM: "stapiadmin@savardgroup.net",  // From: for admin notifications (must be a verified "Send mail as" alias on the sender's Gmail)
-    DRIVE_FOLDER_ID: "0AABLzIs4R4GFUk9PVA",  // Savard procurement shared drive; monthly "Month YYYY" subfolders are auto-created under it
-    VERSION: "3.5.1",
+    LEADERSHIP_THRESHOLD: 400,   // refreshed from the server on load
+    VERSION: "4.1.0",
   };
 </script>
 
@@ -397,23 +394,12 @@ async function loadUserProfile() {
       return;
     }
 
-    // Load user record from sheet
-    await loadSettings();
-    await loadBranchesForSetup();
-    await loadCurrentUser(res.email);
-    if (CURRENT_USER) showApp();
+    // Load everything (and the caller's role) from the backend in one call.
+    const ok = await loadAllData();
+    if (ok && CURRENT_USER) showApp();
   } catch (e) {
     showLoginError('Failed to load profile: ' + e.message);
   }
-}
-
-// Pre-load branches so access pending screen can show branch list
-let _branchesForSetup = [];
-async function loadBranchesForSetup() {
-  try {
-    const data = await sheetsGet('Branches!A2:F100');
-    _branchesForSetup = (data.values||[]).filter(r=>r[4]==='TRUE').map(r=>({id:r[0],name:r[1],approver:r[2]}));
-  } catch(e) { _branchesForSetup = []; }
 }
 
 function showAccessPending() {
@@ -430,42 +416,7 @@ function showAccessPending() {
   }
 }
 
-async function loadCurrentUser(email) {
-  try {
-    const data = await sheetsGet('Users!A2:J500');
-    const rows = data.values || [];
-    const user = rows.find(r => r[2] && r[2].toLowerCase() === email.toLowerCase());
-    if (user) {
-      CURRENT_USER = {
-        id: user[0], name: user[1], email: user[2], role: user[3],
-        branches: (user[4]||'').split('|'), primaryBranch: user[5],
-        approverEmail: user[6], active: user[7]
-      };
-    } else {
-      // No record found — show access pending screen
-      CURRENT_USER = null;
-      showAccessPending();
-      return;
-    }
-  } catch(e) {
-    console.error('loadCurrentUser', e);
-    CURRENT_USER = {
-      id:'?', name: CURRENT_PROFILE.name, email: CURRENT_PROFILE.email,
-      role:'Requestor', branches:['Unknown'], primaryBranch:'Unknown',
-      approverEmail:'', active:'TRUE'
-    };
-  }
-}
-
-async function loadSettings() {
-  try {
-    const data = await sheetsGet('Settings!A2:C20');
-    const rows = data.values || [];
-    rows.forEach(r => {
-      if (r[0] === 'LEADERSHIP_THRESHOLD') CONFIG.LEADERSHIP_THRESHOLD = parseFloat(r[1])||400;
-    });
-  } catch(e) { console.warn('Could not load settings', e); }
-}
+async function loadSettings() { /* settings now arrive via bootstrap */ }
 
 function showApp() {
   document.getElementById('login-screen').style.display = 'none';
@@ -507,10 +458,8 @@ function showLoginError(msg) {
 }
 
 // ═══════════════════════════════════════════════════════════
-//  SHEETS API HELPERS
+//  BACKEND API + IDENTITY
 // ═══════════════════════════════════════════════════════════
-const BASE = 'https://sheets.googleapis.com/v4/spreadsheets/';
-
 async function gFetch(url, opts={}) {
   const res = await fetch(url, {
     ...opts,
@@ -523,71 +472,31 @@ async function gFetch(url, opts={}) {
   return res.json();
 }
 
-async function sheetsGet(range) {
-  return gFetch(`${BASE}${CONFIG.SHEET_ID}/values/${encodeURIComponent(range)}`);
-}
-
-async function sheetsAppend(range, values) {
-  return gFetch(
-    `${BASE}${CONFIG.SHEET_ID}/values/${encodeURIComponent(range)}:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`,
-    { method:'POST', body: JSON.stringify({ values }) }
-  );
-}
-
-async function sheetsUpdate(range, values) {
-  return gFetch(
-    `${BASE}${CONFIG.SHEET_ID}/values/${encodeURIComponent(range)}?valueInputOption=USER_ENTERED`,
-    { method:'PUT', body: JSON.stringify({ values }) }
-  );
-}
-
-async function appendRow(sheet, row) {
-  return sheetsAppend(`${sheet}!A1`, [row]);
+// All data now flows through the server-side gatekeeper (Phase 1 Cloud Function).
+// The browser only proves identity (the access token); the backend verifies it,
+// enforces role access, and reads/writes the Sheet + Drive on our behalf.
+async function api(action, payload) {
+  if (!CONFIG.API_URL) throw new Error('API_URL is not set — configure the Cloud Function URL in CONFIG.');
+  const res = await fetch(CONFIG.API_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + ACCESS_TOKEN },
+    body: JSON.stringify({ action, payload: payload || {}, accessToken: ACCESS_TOKEN })
+  });
+  let json;
+  try { json = await res.json(); } catch (e) { throw new Error('Unexpected server response (' + res.status + ')'); }
+  if (!res.ok || !json.ok) {
+    const err = new Error((json && json.error) || ('Server error (' + res.status + ')'));
+    err.status = res.status;
+    throw err;
+  }
+  return json.data;
 }
 
 function genID(prefix) {
   return prefix + '-' + Math.random().toString(36).substr(2,6).toUpperCase();
 }
 
-// ═══════════════════════════════════════════════════════════
-//  GMAIL SEND HELPER
-// ═══════════════════════════════════════════════════════════
-async function sendEmail(to, subject, htmlBody, from) {
-  try {
-    const headers = ['To: ' + to];
-    // Gmail only honors a From header that is the sender's own address or a
-    // verified "Send mail as" alias on their account; otherwise it sends as the
-    // authenticated user regardless of what we put here.
-    if (from) headers.push('From: ' + from);
-    const msg = headers.concat([
-      'Subject: ' + subject,
-      'MIME-Version: 1.0',
-      'Content-Type: text/html; charset=utf-8',
-      '',
-      htmlBody
-    ]).join('\r\n');
-    const encoded = btoa(unescape(encodeURIComponent(msg)))
-      .replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
-    await gFetch('https://gmail.googleapis.com/gmail/v1/users/me/messages/send', {
-      method: 'POST',
-      body: JSON.stringify({ raw: encoded })
-    });
-    // Log to sheet
-    await appendRow('NotificationsLog', [
-      genID('LOG'), '', to, subject, new Date().toISOString(), 'email', 'sent'
-    ]);
-    return true;
-  } catch(e) {
-    console.warn('Email send failed:', e.message);
-    return false;
-  }
-}
-
-// ─── Attachment upload (Google Drive) ───────────────────────
-// Uploads a file to the central procurement folder (CONFIG.DRIVE_FOLDER_ID) using
-// the signed-in user's token and the drive.file scope, then shares it with the
-// savardgroup.net domain so approvers/procurement can open the link. Falls back
-// to the user's My Drive if no folder is configured.
+// ─── Attachment file → base64 (uploaded via the backend) ───────────────────
 function fileToBase64(file) {
   return new Promise((resolve, reject) => {
     const r = new FileReader();
@@ -597,106 +506,6 @@ function fileToBase64(file) {
   });
 }
 
-async function uploadImageToDrive(file, namePrefix, parentId) {
-  if (!ACCESS_TOKEN) throw new Error('Not signed in');
-  const meta = { name: (namePrefix ? namePrefix + ' - ' : '') + file.name };
-  const parent = parentId || CONFIG.DRIVE_FOLDER_ID;
-  if (parent) meta.parents = [parent];
-
-  const base64 = await fileToBase64(file);
-  const boundary = '----savard' + Date.now();
-  const body =
-    '\r\n--' + boundary + '\r\n' +
-    'Content-Type: application/json; charset=UTF-8\r\n\r\n' +
-    JSON.stringify(meta) +
-    '\r\n--' + boundary + '\r\n' +
-    'Content-Type: ' + (file.type || 'application/octet-stream') + '\r\n' +
-    'Content-Transfer-Encoding: base64\r\n\r\n' +
-    base64 +
-    '\r\n--' + boundary + '--';
-
-  const res = await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&supportsAllDrives=true&fields=id,webViewLink', {
-    method: 'POST',
-    headers: { Authorization: 'Bearer ' + ACCESS_TOKEN, 'Content-Type': 'multipart/related; boundary=' + boundary },
-    body
-  });
-  if (!res.ok) {
-    const t = await res.text();
-    throw new Error('Drive upload failed (' + res.status + '): ' + t.slice(0, 160));
-  }
-  const data = await res.json();
-
-  // Best-effort: share with the org domain so any @savardgroup.net user with the
-  // link can view. If the folder already grants access this is harmless.
-  try {
-    await fetch('https://www.googleapis.com/drive/v3/files/' + data.id + '/permissions?supportsAllDrives=true', {
-      method: 'POST',
-      headers: { Authorization: 'Bearer ' + ACCESS_TOKEN, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ role: 'reader', type: 'domain', domain: 'savardgroup.net' })
-    });
-  } catch (e) { /* folder sharing may already cover visibility */ }
-
-  return data.webViewLink || ('https://drive.google.com/file/d/' + data.id + '/view');
-}
-
-// Create a Drive folder (used for monthly attachment subfolders).
-async function createDriveFolder(name, parentId) {
-  const meta = { name, mimeType: 'application/vnd.google-apps.folder' };
-  if (parentId) meta.parents = [parentId];
-  const res = await fetch('https://www.googleapis.com/drive/v3/files?supportsAllDrives=true&fields=id', {
-    method: 'POST',
-    headers: { Authorization: 'Bearer ' + ACCESS_TOKEN, 'Content-Type': 'application/json' },
-    body: JSON.stringify(meta)
-  });
-  if (!res.ok) { const t = await res.text(); throw new Error('Folder create failed (' + res.status + '): ' + t.slice(0,160)); }
-  return (await res.json()).id;
-}
-
-// Resolve the "Month YYYY" subfolder for a date, creating it once and recording
-// its ID in the Settings sheet so every user routes into the SAME folder.
-// (drive.file can't search folders other users created, so the sheet is the
-// shared registry that prevents duplicate month folders.)
-const MONTH_NAMES = ['January','February','March','April','May','June','July','August','September','October','November','December'];
-async function getOrCreateMonthFolder(date) {
-  if (!CONFIG.DRIVE_FOLDER_ID) return '';   // no central drive set → goes to My Drive
-  const y = date.getFullYear(), m = date.getMonth();
-  const key = 'ATTACH_FOLDER::' + y + '-' + (m+1 < 10 ? '0' : '') + (m+1);
-  const label = MONTH_NAMES[m] + ' ' + y;
-
-  // Already created? Reuse the registered folder ID.
-  try {
-    const data = await sheetsGet('Settings!A:B');
-    const rows = data.values || [];
-    for (let i = 0; i < rows.length; i++) {
-      if (rows[i][0] === key && rows[i][1]) return rows[i][1];
-    }
-  } catch (e) { /* fall through and create */ }
-
-  // First request of this month — create the folder and register it.
-  const id = await createDriveFolder(label, CONFIG.DRIVE_FOLDER_ID);
-  try { await appendRow('Settings', [key, id, label]); } catch (e) { /* registry write best-effort */ }
-  return id;
-}
-
-
-function emailTemplate(title, body, actionLabel, actionNote) {
-  return `
-  <div style="font-family:'Segoe UI',sans-serif;max-width:560px;margin:0 auto;background:#f4f5f7;padding:24px">
-    <div style="background:#1a1a1a;border-radius:10px 10px 0 0;padding:20px 24px;border-bottom:4px solid #cc0000">
-      <div style="font-size:18px;font-weight:700;color:#fff">Savard Group</div>
-      <div style="font-size:12px;color:rgba(255,255,255,.5);margin-top:2px;text-transform:uppercase;letter-spacing:.8px">Procurement Portal</div>
-    </div>
-    <div style="background:#fff;border-radius:0 0 10px 10px;padding:24px;border:1px solid #e2e4e9;border-top:none">
-      <h2 style="font-size:18px;font-weight:700;color:#1a1d23;margin-bottom:12px">${title}</h2>
-      ${body}
-      ${actionLabel ? `<div style="margin-top:20px;padding:12px 16px;background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;font-size:13px;color:#2563eb">${actionLabel}</div>` : ''}
-      ${actionNote ? `<p style="font-size:12px;color:#9ca3af;margin-top:16px">${actionNote}</p>` : ''}
-    </div>
-    <div style="text-align:center;font-size:11px;color:#9ca3af;margin-top:16px">
-      Savard Group Procurement Portal · Automated notification · Do not reply
-    </div>
-  </div>`;
-}
 
 // ═══════════════════════════════════════════════════════════
 //  DATA LAYER
@@ -711,22 +520,24 @@ let _loading = false;
 async function loadAllData() {
   showLoading('Loading data...');
   try {
-    const [rRes, iRes, aRes, uRes, bRes] = await Promise.all([
-      sheetsGet('Requests!A2:W2000'),
-      sheetsGet('OrderItems!A2:V2000'),
-      sheetsGet('Approvals!A2:I2000'),
-      sheetsGet('Users!A2:J500'),
-      sheetsGet('Branches!A2:F100'),
-    ]);
-    _requests = parseRows(rRes.values||[], REQUEST_KEYS);
-    _items    = parseRows(iRes.values||[], ITEM_KEYS);
-    _approvals= parseRows(aRes.values||[], APPROVAL_KEYS);
-    _users    = parseRows(uRes.values||[], USER_KEYS);
-    _branches = parseRows(bRes.values||[], BRANCH_KEYS);
+    const d = await api('bootstrap');
+    _requests  = d.requests  || [];
+    _items     = d.items     || [];
+    _approvals = d.approvals || [];
+    _users     = d.users     || [];
+    _branches  = d.branches  || [];
+    if (d.settings && d.settings.LEADERSHIP_THRESHOLD) CONFIG.LEADERSHIP_THRESHOLD = d.settings.LEADERSHIP_THRESHOLD;
+    if (d.me) CURRENT_USER = d.me;
+    return true;
   } catch(e) {
+    if (e.message === 'access_pending' || e.message === 'account_inactive') {
+      CURRENT_USER = null; showAccessPending(); return false;
+    }
     toast('Failed to load data: ' + e.message, 'err');
+    return false;
+  } finally {
+    hideLoading();
   }
-  hideLoading();
 }
 
 const REQUEST_KEYS  = ['id','submittedAt','submitterName','submitterEmail','branch','corpDept','travelerName','travelerID','travelerEmail','travelerDOB','govIDLink','totalAmount','status','needsLeadership','customerName','customerPO','paymentMethod','customerBilled','eeDeduction','comments','requestKind','link','attachmentLink'];
@@ -803,21 +614,23 @@ const PAGES = {
   users:                { title:'User Management', sub:'Manage users, roles & branch assignments' },
   'approval-rules':     { title:'Approval Rules', sub:'Configure workflow and routing' },
   reports:              { title:'Reports & Spend', sub:'Analytics across all branches' },
+  'spend-threshold':    { title:'Spend Threshold', sub:'Leadership approval limit' },
+  'audit-log':          { title:'Audit Log', sub:'Approval & decision history' },
   'admin-panel':        { title:'Admin Panel', sub:'System configuration & permissions' },
 };
 const NAV_ICONS = {
   dashboard:'ti-layout-dashboard','my-requests':'ti-file-text','new-request':'ti-circle-plus',
   'pending-approvals':'ti-clipboard-check',queue:'ti-stack-2','all-requests':'ti-files',
   'leadership-approvals':'ti-crown',users:'ti-users','approval-rules':'ti-git-branch',
-  reports:'ti-chart-bar','admin-panel':'ti-shield-lock',
+  reports:'ti-chart-bar','spend-threshold':'ti-adjustments-dollar','audit-log':'ti-history','admin-panel':'ti-shield-lock',
 };
 const ROLE_NAV = {
   Requestor:         [null,['dashboard','my-requests','new-request']],
   'Branch Approver': [null,['dashboard'],['Approvals',['pending-approvals']],['Requests',['my-requests']],['Reports',['reports']]],
-  'Procurement Admin':[null,['dashboard'],['Booking',['queue']],['Requests',['new-request','all-requests']]],
-  Leadership:        [null,['dashboard'],['Approvals',['leadership-approvals']],['Requests',['all-requests']]],
-  Finance:           [null,['dashboard'],['Data',['all-requests','reports']]],
-  'Super Admin':     [null,['dashboard'],['Approvals',['pending-approvals']],['Operations',['new-request','all-requests']],['Administration',['users','approval-rules','reports','admin-panel']]],
+  'Procurement Admin':[null,['dashboard'],['Booking',['queue']],['Requests',['new-request','all-requests']],['Admin',['spend-threshold','audit-log']]],
+  Leadership:        [null,['dashboard'],['Approvals',['leadership-approvals']],['Requests',['all-requests']],['Admin',['spend-threshold','audit-log']]],
+  Finance:           [null,['dashboard'],['Data',['all-requests']],['Admin',['spend-threshold','audit-log']]],
+  'Super Admin':     [null,['dashboard'],['Approvals',['pending-approvals']],['Operations',['new-request','all-requests']],['Administration',['users','approval-rules','reports','spend-threshold','audit-log','admin-panel']]],
 };
 
 function renderNav() {
@@ -880,6 +693,8 @@ function renderPage() {
     case 'users': c.innerHTML = renderUsers(); break;
     case 'approval-rules': c.innerHTML = renderApprovalRules(); break;
     case 'reports': c.innerHTML = renderReports(); break;
+    case 'spend-threshold': c.innerHTML = renderSpendThreshold(); break;
+    case 'audit-log': c.innerHTML = renderAuditLog(); break;
     case 'admin-panel': c.innerHTML = renderAdminPanel(); break;
     default: c.innerHTML = '<div class="empty"><i class="ti ti-construction"></i><p>Coming soon</p></div>';
   }
@@ -962,7 +777,7 @@ function renderDashboard() {
   }).join('');
 
   const canSeeSpend = ['Procurement Admin','Finance','Leadership','Super Admin'].includes(CURRENT_USER.role);
-  const canSeeThreshold = ['Procurement Admin','Super Admin'].includes(CURRENT_USER.role);
+  const canSeeThreshold = ['Procurement Admin','Leadership','Finance','Super Admin'].includes(CURRENT_USER.role);
 
   return `
   <div class="sg">
@@ -1095,6 +910,66 @@ function renderUsers() {
   </div>`;
 }
 
+function renderSpendThreshold() {
+  return `
+  <div style="max-width:560px">
+    <div class="sh"><h3>Leadership Approval Threshold</h3></div>
+    <div class="tw" style="padding:22px">
+      <p style="font-size:13px;color:var(--muted);margin:0 0 18px;line-height:1.5">
+        Requests at or above this amount automatically require <strong>Leadership approval</strong>
+        after the branch approver signs off, before procurement can book.
+      </p>
+      <div class="fg" style="margin-bottom:18px">
+        <label>Threshold (USD)</label>
+        <div style="display:flex;align-items:center;gap:10px">
+          <span style="font-size:18px;font-weight:700;color:var(--muted)">$</span>
+          <input type="number" id="threshold-input" value="${CONFIG.LEADERSHIP_THRESHOLD}" min="0" step="50" style="width:160px;font-size:18px;font-weight:700"/>
+        </div>
+      </div>
+      <button class="btn btn-primary" onclick="saveThreshold()"><i class="ti ti-device-floppy"></i> Save Threshold</button>
+    </div>
+    <div class="infobox info" style="margin-top:16px">
+      <i class="ti ti-info-circle" style="font-size:16px;flex-shrink:0;margin-top:1px"></i>
+      <div>Changing the threshold affects only <strong>new</strong> requests submitted afterward. Requests already in the workflow keep the routing they were created with.</div>
+    </div>
+  </div>`;
+}
+
+function renderAuditLog() {
+  // _approvals is already scoped by the backend to the requests this role may see.
+  const reqById = {};
+  _requests.forEach(r => { reqById[r.id] = r; });
+  const rows = [..._approvals]
+    .filter(a => a.id)
+    .sort((a,b) => new Date(b.decidedAt||0) - new Date(a.decidedAt||0));
+
+  const decBadge = d => {
+    const map = { Approved:'b-ok', Booked:'b-navy', Rejected:'b-err', Pending:'b-gray' };
+    return `<span class="bdg ${map[d]||'b-gray'}">${d||'—'}</span>`;
+  };
+
+  return `
+  <div class="sh"><h3>Audit Log</h3><span style="font-size:12px;color:var(--muted)">${rows.length} decision${rows.length!==1?'s':''}</span></div>
+  <div class="tw">
+    <table>
+      <thead><tr><th>When</th><th>Request</th><th>Step</th><th>By</th><th>Decision</th><th>Note</th></tr></thead>
+      <tbody>
+        ${rows.length ? rows.map(a => {
+          const req = reqById[a.requestID];
+          return `<tr${req?` class="cr" onclick="openRequestDetail('${a.requestID}')"`:''}>
+            <td style="white-space:nowrap;font-size:12px">${a.decidedAt ? new Date(a.decidedAt).toLocaleString('en-US',{month:'short',day:'numeric',year:'numeric',hour:'numeric',minute:'2-digit'}) : '—'}</td>
+            <td><span style="font-weight:600;color:var(--navy)">${a.requestID||'—'}</span>${req?` <span style="color:var(--muted);font-size:12px">${req.travelerName||''}</span>`:''}</td>
+            <td style="font-size:12px">${a.step||'—'}</td>
+            <td style="font-size:12px">${a.approverName||a.approverEmail||'—'}</td>
+            <td>${decBadge(a.decision)}</td>
+            <td style="font-size:12px;color:var(--muted)">${a.note||''}</td>
+          </tr>`;
+        }).join('') : `<tr><td colspan="6"><div class="empty" style="padding:30px"><i class="ti ti-history"></i><p>No decisions recorded yet.</p></div></td></tr>`}
+      </tbody>
+    </table>
+  </div>`;
+}
+
 function renderApprovalRules() {
   return `<div class="two-col">
     <div>
@@ -1118,22 +993,7 @@ function renderApprovalRules() {
       </div>
     </div>
     <div>
-      <div class="sh"><h3>Threshold Settings</h3></div>
-      <div class="tw" style="padding:20px;margin-bottom:16px">
-        <div class="fg" style="margin-bottom:16px">
-          <label>Leadership Approval Threshold (USD)</label>
-          <div style="display:flex;align-items:center;gap:10px">
-            <input type="number" id="threshold-input" value="${CONFIG.LEADERSHIP_THRESHOLD}" style="width:120px;font-size:16px;font-weight:700"/>
-            <span style="color:var(--muted);font-size:12px">Requests at or above this amount require Leadership approval</span>
-          </div>
-        </div>
-        <div class="fg" style="margin-bottom:16px">
-          <label>Auto-escalation after (days without action)</label>
-          <input type="number" value="3" style="width:80px"/>
-        </div>
-        <button class="btn btn-primary btn-sm" onclick="saveThreshold()"><i class="ti ti-device-floppy"></i> Save Settings</button>
-      </div>
-      <div class="sh"><h3>Branch → Approver Assignments</h3><button class="btn btn-outline btn-sm" onclick="openAddBranch()"><i class="ti ti-plus"></i> Add</button></div>
+      <div class="sh"><h3>Branch &rarr; Approver Assignments</h3><button class="btn btn-outline btn-sm" onclick="openAddBranch()"><i class="ti ti-plus"></i> Add</button></div>
       <div class="tw">
         ${_branches.filter(b=>b.active==='TRUE').map(b=>`
         <div style="padding:10px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:12px;font-size:13px">
@@ -1179,8 +1039,8 @@ function renderReports() {
   const itemSpend = Object.entries(byType).filter(([t])=>!travelTypes.includes(t)).reduce((s,[,v])=>s+v,0);
   const quoteCount = reqs.filter(r=>isQuote(r)).length;
 
-  // QuickBooks Desktop export card — Finance / Super Admin only.
-  const isFinanceLike = ['Finance','Super Admin'].includes(CURRENT_USER.role);
+  // QuickBooks Desktop export card — Super Admin only.
+  const isFinanceLike = CURRENT_USER.role === 'Super Admin';
   const yearStart = new Date(new Date().getFullYear(),0,1).toISOString().slice(0,10);
   const todayStr  = new Date().toISOString().slice(0,10);
   const qbCard = isFinanceLike ? `
@@ -1418,211 +1278,49 @@ function buildQuickBooksIIF() {
 //  ACTIONS
 // ═══════════════════════════════════════════════════════════
 async function submitRequest(formData) {
-  const reqID = genID('R');
   const kind = formData.requestKind || 'Purchase Request';
-  const total = formData.items.reduce((s,i)=>s+(parseFloat(i.amount)||0),0);
-  const needsLeadership = total >= CONFIG.LEADERSHIP_THRESHOLD;
-
-  // Write Request row (col U = requestKind, V = link, W = attachmentLink)
-  await appendRow('Requests', [
-    reqID, new Date().toISOString(), CURRENT_USER.name, CURRENT_USER.email,
-    formData.branch, formData.corpDept, formData.travelerName, formData.travelerID,
-    formData.travelerEmail, formData.travelerDOB, formData.govIDLink,
-    total.toFixed(2), 'Pending Approval', needsLeadership?'YES':'NO',
-    formData.customerName, formData.customerPO, formData.paymentMethod,
-    formData.customerBilled, formData.eeDeduction, formData.comments, kind, formData.link||'', formData.attachmentLink||''
-  ]);
-
-  // Write each item — purchaseType holds the category (Travel / Item Request),
-  // itemType holds the specific type (Flight, PPE, Tech, ...).
-  for (const item of formData.items) {
-    await appendRow('OrderItems', [
-      genID('I'), reqID, item.category||'Travel', item.type, item.detail||'',
-      item.departureDate||'', item.departureLocation||'', item.arrivalLocation||'',
-      item.tripType||'', item.checkIn||'', item.checkOut||'',
-      item.guestName||formData.travelerName, item.guestDOB||formData.travelerDOB,
-      item.cityOfStay||'', item.pickupLocation||'', item.dropoffLocation||'',
-      item.vendor||'', item.amount||0, '', '', '', ''
-    ]);
-  }
-
-  // Write approval record (step 1 pending)
-  const approverEmail = getApproverForBranch(formData.branch) || formData.approverEmail || '';
-  await appendRow('Approvals', [
-    genID('APV'), reqID, 'Branch Approver', '', approverEmail,
-    'Pending', new Date().toISOString(), '', 'FALSE'
-  ]);
-
-  // Send email to approver
-  if (approverEmail) {
-    const approverUser = _users.find(u=>u.email===approverEmail);
-    const approverName = approverUser ? approverUser.name : 'Branch Approver';
-    await sendEmail(
-      approverEmail,
-      `[Action Required] New Procurement Request ${reqID} — ${formData.travelerName}`,
-      emailTemplate(
-        `New Request Needs Your Approval`,
-        `<p style="font-size:14px;color:#374151;margin-bottom:12px">Hi ${approverName},</p>
-         <p style="font-size:14px;color:#374151;margin-bottom:16px"><strong>${CURRENT_USER.name}</strong> submitted a procurement request for <strong>${formData.travelerName}</strong> in <strong>${formData.branch}</strong>.</p>
-         <table style="width:100%;border-collapse:collapse;font-size:13px;margin-bottom:16px">
-           <tr><td style="padding:6px 0;color:#6b7280">Request ID</td><td style="font-weight:600">${reqID}</td></tr>
-           <tr><td style="padding:6px 0;color:#6b7280">Total Amount</td><td style="font-weight:700;color:${needsLeadership?'#d97706':'#059669'}">${fmtAmt(total)}${needsLeadership?' ⚠ Leadership approval also required':''}</td></tr>
-           <tr><td style="padding:6px 0;color:#6b7280">Items</td><td>${formData.items.map(i=>i.type).join(', ')}</td></tr>
-         </table>`,
-        `Log in to the Procurement Portal to review and approve or reject this request.`,
-        `This is an automated notification from the Savard Group Procurement Portal.`
-      )
-    );
-  }
-
-  toast(`${kind === 'Quote Request' ? 'Quote request' : 'Request'} ${reqID} submitted! Your approver has been notified.`, 'ok');
+  const res = await api('submitRequest', formData);   // backend writes rows + notifies approver
+  toast(`${kind === 'Quote Request' ? 'Quote request' : 'Request'} ${res.id} submitted! Your approver has been notified.`, 'ok');
   closePanel();
   await navigate('my-requests');
 }
 
 async function approveRequest(reqID, decision) {
-  const req = _requests.find(r=>r.id===reqID);
-  if (!req) return;
-  const total = parseFloat(req.totalAmount)||0;
-  const needsLeadership = total >= CONFIG.LEADERSHIP_THRESHOLD;
-
-  let newStatus, nextEmail, nextName, emailSubject, emailBody;
-
-  if (decision==='approve') {
-    if (needsLeadership) {
-      newStatus = 'Leadership Approval';
-      nextEmail = _users.find(u=>u.role==='Leadership')?.email || '';
-      nextName = _users.find(u=>u.role==='Leadership')?.name || 'Leadership';
-      emailSubject = `[Leadership Approval Required] Request ${reqID} — ${fmtAmt(total)}`;
-      emailBody = emailTemplate(
-        `Leadership Approval Required`,
-        `<p style="font-size:14px;color:#374151;margin-bottom:12px">Hi ${nextName},</p>
-         <p style="font-size:14px;color:#374151;margin-bottom:16px">Request <strong>${reqID}</strong> for <strong>${req.travelerName}</strong> totaling <strong style="color:#d97706">${fmtAmt(total)}</strong> has been approved by the branch approver and now requires your leadership approval.</p>`,
-        `Log in to the Procurement Portal to review this high-value request.`,null
-      );
-    } else {
-      newStatus = 'Ready to Book';
-      nextEmail = _users.find(u=>u.role==='Procurement Admin')?.email || '';
-      nextName = _users.find(u=>u.role==='Procurement Admin')?.name || 'Procurement';
-      emailSubject = `[Ready to Book] Request ${reqID} approved — ${req.travelerName}`;
-      emailBody = emailTemplate(
-        `Request Approved — Ready to Book`,
-        `<p style="font-size:14px;color:#374151;margin-bottom:16px">Request <strong>${reqID}</strong> for <strong>${req.travelerName}</strong> (${req.branch}) has been approved and is ready for booking. Total: <strong>${fmtAmt(total)}</strong></p>`,
-        `Log in to the Procurement Portal to proceed with booking.`,null
-      );
-    }
-  } else {
-    newStatus = 'Rejected';
-    nextEmail = req.submitterEmail;
-    emailSubject = `[Rejected] Procurement Request ${reqID}`;
-    emailBody = emailTemplate(
-      `Your Request Was Not Approved`,
-      `<p style="font-size:14px;color:#374151;margin-bottom:16px">Request <strong>${reqID}</strong> for <strong>${req.travelerName}</strong> has been rejected by your branch approver. Please contact your approver for more information.</p>`,
-      null, null
-    );
-  }
-
-  // Update status in sheet — find row
-  await updateRequestStatus(reqID, newStatus);
-
-  // Log approval
-  await appendRow('Approvals', [
-    genID('APV'), reqID, 'Branch Approver', CURRENT_USER.name, CURRENT_USER.email,
-    decision==='approve'?'Approved':'Rejected', new Date().toISOString(), '', 'TRUE'
-  ]);
-
-  // Send email
-  if (nextEmail) await sendEmail(nextEmail, emailSubject, emailBody);
-
-  toast(decision==='approve' ? `Approved! Request moved to ${needsLeadership?'Leadership':'procurement queue'}.` : 'Rejected. Requestor has been notified.', decision==='approve'?'ok':'warn');
+  try {
+    const res = await api('decide', { reqID, decision });
+    toast(decision === 'approve'
+      ? `Approved! Request moved to ${res.status === 'Leadership Approval' ? 'Leadership' : 'procurement queue'}.`
+      : 'Rejected. Requestor has been notified.', decision === 'approve' ? 'ok' : 'warn');
+  } catch (e) { toast('Could not record decision: ' + e.message, 'err'); return; }
   closePanel();
   await navigate(currentPage);
 }
 
 async function leadershipDecision(reqID, decision) {
-  const req = _requests.find(r=>r.id===reqID);
-  if (!req) return;
-  let newStatus, emailTo, emailSubj, emailBody;
-
-  if (decision==='approve') {
-    newStatus = 'Ready to Book';
-    emailTo = _users.find(u=>u.role==='Procurement Admin')?.email||'';
-    emailSubj = `[Ready to Book] Leadership Approved — ${reqID}`;
-    emailBody = emailTemplate('Leadership Approved — Ready to Book',
-      `<p style="font-size:14px;color:#374151">Request <strong>${reqID}</strong> for <strong>${req.travelerName}</strong> totaling <strong>${fmtAmt(req.totalAmount)}</strong> has received Leadership approval and is ready for booking.</p>`,
-      'Log in to the Procurement Portal to proceed.', null
-    );
-  } else {
-    newStatus = 'Rejected';
-    emailTo = req.submitterEmail;
-    emailSubj = `[Rejected] Procurement Request ${reqID}`;
-    emailBody = emailTemplate('Your Request Was Rejected by Leadership',
-      `<p style="font-size:14px;color:#374151">Request <strong>${reqID}</strong> for <strong>${req.travelerName}</strong> was not approved by Leadership.</p>`,
-      null, null
-    );
-  }
-
-  await updateRequestStatus(reqID, newStatus);
-  await appendRow('Approvals', [
-    genID('APV'), reqID, 'Leadership', CURRENT_USER.name, CURRENT_USER.email,
-    decision==='approve'?'Approved':'Rejected', new Date().toISOString(), '', 'TRUE'
-  ]);
-  if (emailTo) await sendEmail(emailTo, emailSubj, emailBody);
-
-  toast(decision==='approve'?'Leadership approved! Sent to procurement queue.':'Rejected. Requestor notified.', decision==='approve'?'ok':'warn');
+  try {
+    await api('leadershipDecide', { reqID, decision });
+    toast(decision === 'approve' ? 'Leadership approved! Sent to procurement queue.' : 'Rejected. Requestor notified.', decision === 'approve' ? 'ok' : 'warn');
+  } catch (e) { toast('Could not record decision: ' + e.message, 'err'); return; }
   closePanel();
   await navigate(currentPage);
 }
 
 async function markBooked(reqID, confirmationLink, note) {
-  const req = _requests.find(r=>r.id===reqID);
-  if (!req) return;
-
-  await updateRequestStatus(reqID, 'Completed');
-  await appendRow('Approvals', [
-    genID('APV'), reqID, 'Procurement', CURRENT_USER.name, CURRENT_USER.email,
-    'Booked', new Date().toISOString(), note||'', 'TRUE'
-  ]);
-
-  // Send confirmation email to requestor
-  await sendEmail(
-    req.submitterEmail,
-    `[Booking Confirmed] Request ${reqID} — ${req.travelerName}`,
-    emailTemplate(
-      'Your Travel Has Been Booked!',
-      `<p style="font-size:14px;color:#374151;margin-bottom:12px">Hi ${req.submitterName},</p>
-       <p style="font-size:14px;color:#374151;margin-bottom:16px">Your procurement request <strong>${reqID}</strong> for <strong>${req.travelerName}</strong> has been booked and confirmed.</p>
-       ${confirmationLink?`<p style="font-size:13px;color:#2563eb;margin-bottom:8px"><a href="${confirmationLink}" style="color:#2563eb">View Confirmation Document →</a></p>`:''}
-       ${note?`<div style="background:#f9fafb;border-left:3px solid #d1d5db;padding:10px 14px;margin-top:12px;font-size:13px;color:#6b7280">Note from procurement: ${note}</div>`:''}`,
-      null,
-      `Request ID: ${reqID} · Total: ${fmtAmt(req.totalAmount)}`
-    )
-  );
-
-  toast('Marked as booked! Confirmation email sent to requestor.', 'ok');
+  try {
+    await api('book', { reqID, confirmationLink, note });
+    toast('Marked as booked! Confirmation email sent to requestor.', 'ok');
+  } catch (e) { toast('Could not mark booked: ' + e.message, 'err'); return; }
   closePanel();
   await navigate('queue');
 }
 
-async function updateRequestStatus(reqID, newStatus) {
-  // Find row number in Requests sheet
-  const data = await sheetsGet('Requests!A:A');
-  const rows = data.values || [];
-  const rowIdx = rows.findIndex(r=>r[0]===reqID);
-  if (rowIdx === -1) { toast('Could not find request in sheet.','err'); return; }
-  const sheetRow = rowIdx + 1; // 1-indexed, row 1 is header
-  await sheetsUpdate(`Requests!M${sheetRow}`, [[newStatus]]);
-}
-
 async function saveThreshold() {
-  const val = parseFloat(document.getElementById('threshold-input').value)||400;
-  CONFIG.LEADERSHIP_THRESHOLD = val;
-  // Find settings row
-  const data = await sheetsGet('Settings!A:A');
-  const rows = data.values||[];
-  const idx = rows.findIndex(r=>r[0]==='LEADERSHIP_THRESHOLD');
-  if (idx>0) await sheetsUpdate(`Settings!B${idx+1}`, [[val.toString()]]);
-  toast('Threshold saved to $' + val, 'ok');
+  const val = parseFloat(document.getElementById('threshold-input').value) || 400;
+  try {
+    await api('saveThreshold', { value: val });
+    CONFIG.LEADERSHIP_THRESHOLD = val;
+    toast('Threshold saved to $' + val, 'ok');
+  } catch (e) { toast('Could not save threshold: ' + e.message, 'err'); }
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -2021,18 +1719,19 @@ async function collectAndSubmit() {
     vendor: root.querySelector('.item-vendor')?.value||'',
   };
 
-  // Upload attachment (if any) before writing the request.
+  // Upload attachment (if any) through the backend before writing the request.
   let attachmentLink = '';
   const fileInput = document.getElementById('nf-file');
   const file = fileInput && fileInput.files && fileInput.files[0];
   if (file) {
-    showLoading('Preparing upload folder...');
-    let parentId = '';
-    try { parentId = await getOrCreateMonthFolder(new Date()); }
-    catch (e) { parentId = CONFIG.DRIVE_FOLDER_ID; }   // fall back to the drive root
     showLoading('Uploading attachment...');
     try {
-      attachmentLink = await uploadImageToDrive(file, travName, parentId);
+      const base64 = await fileToBase64(file);
+      const res = await api('uploadAttachment', {
+        base64, mimeType: file.type || 'application/octet-stream',
+        fileName: file.name, namePrefix: travName,
+      });
+      attachmentLink = res.link || '';
     } catch (e) {
       hideLoading();
       toast('Attachment upload failed: ' + e.message + ' — request not submitted.', 'err');
@@ -2164,45 +1863,18 @@ async function saveNewUser() {
   if (!first||!last||!email) { toast('Name and email are required.','err'); return; }
   if (!email.endsWith('@savardgroup.net')) { toast('Email must be a @savardgroup.net address.','err'); return; }
   const name = first + ' ' + last;
-  const role = gv('nu-role');
   const primary = gv('nu-primary');
-  const approver = gv('nu-approver');
   const extraBranches = [...document.querySelectorAll('.nu-branch-cb:checked')].map(c=>c.value);
   const allBranches = [...new Set([primary, ...extraBranches].filter(Boolean))].join('|');
-  const approverUser = _users.find(u=>u.email===approver);
-  const approverName = approverUser ? approverUser.name : approver || 'your assigned approver';
-  const portalURL = window.location.href;
 
-  showLoading('Creating user and sending welcome email...');
-  await appendRow('Users', [genID('U'), name, email, role, allBranches, primary, approver, 'TRUE', new Date().toISOString(), 'Created by admin']);
-
-  // Send welcome email
-  await sendEmail(
-    email,
-    `Welcome to the Savard Group Procurement Portal`,
-    emailTemplate(
-      `You're all set, ${first}!`,
-      `<p style="font-size:14px;color:#374151;margin-bottom:16px">
-        Your account has been set up in the <strong>Savard Group Procurement Portal</strong> by ${CURRENT_USER.name}.
-      </p>
-      <table style="width:100%;border-collapse:collapse;font-size:13px;margin-bottom:20px;background:#f9fafb;border-radius:8px;overflow:hidden">
-        <tr><td style="padding:10px 14px;color:#6b7280;border-bottom:1px solid #e5e7eb">Your Name</td><td style="padding:10px 14px;font-weight:600;border-bottom:1px solid #e5e7eb">${name}</td></tr>
-        <tr><td style="padding:10px 14px;color:#6b7280;border-bottom:1px solid #e5e7eb">Role</td><td style="padding:10px 14px;font-weight:600;border-bottom:1px solid #e5e7eb">${role}</td></tr>
-        <tr><td style="padding:10px 14px;color:#6b7280;border-bottom:1px solid #e5e7eb">Branch / Department</td><td style="padding:10px 14px;font-weight:600;border-bottom:1px solid #e5e7eb">${primary||'—'}</td></tr>
-        <tr><td style="padding:10px 14px;color:#6b7280">Your Approver</td><td style="padding:10px 14px;font-weight:600">${approverName}</td></tr>
-      </table>
-      <p style="font-size:14px;color:#374151;margin-bottom:16px">
-        Click the button below to sign in with your Savard Google account and get started.
-      </p>
-      <a href="${portalURL}" style="display:inline-block;background:#cc0000;color:#fff;padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:600;font-size:14px">
-        Open Procurement Portal →
-      </a>`,
-      `If you have any questions, contact the STAPI team or reply to this email.`,
-      `Your account was created by ${CURRENT_USER.name} on ${new Date().toLocaleDateString('en-US',{month:'long',day:'numeric',year:'numeric'})}.`
-    )
-  );
-
-  toast(`${name} created and welcome email sent to ${email}!`, 'ok');
+  showLoading('Creating user...');
+  try {
+    await api('saveUser', {
+      name, email, role: gv('nu-role'),
+      branches: allBranches, primaryBranch: primary, approverEmail: gv('nu-approver'), active: 'TRUE',
+    });
+    toast(`${name} created.`, 'ok');
+  } catch (e) { hideLoading(); toast('Could not create user: ' + e.message, 'err'); return; }
   closePanel();
   await navigate('admin-panel');
   hideLoading();
@@ -2370,19 +2042,14 @@ function adminFilterUsers(search, role) {
 
 async function toggleUserActive(userID, currentActive) {
   const newVal = currentActive === 'TRUE' ? 'FALSE' : 'TRUE';
-  const data = await sheetsGet('Users!A:A');
-  const rows = data.values||[];
-  const idx = rows.findIndex(r=>r[0]===userID);
-  if (idx < 1) { toast('User not found','err'); return; }
-  await sheetsUpdate(`Users!H${idx+1}`, [[newVal]]);
-  toast(newVal==='TRUE' ? 'User reactivated.' : 'User deactivated.', newVal==='TRUE'?'ok':'warn');
+  const u = _users.find(x => x.id === userID);
+  if (!u) { toast('User not found','err'); return; }
+  try {
+    await api('saveUser', { id: u.id, name: u.name, email: u.email, role: u.role,
+      branches: u.branches, primaryBranch: u.primaryBranch, approverEmail: u.approverEmail, active: newVal });
+    toast(newVal==='TRUE' ? 'User reactivated.' : 'User deactivated.', newVal==='TRUE'?'ok':'warn');
+  } catch (e) { toast('Could not update user: ' + e.message, 'err'); return; }
   await navigate('admin-panel');
-}
-
-async function getSheetGid(title) {
-  const meta = await gFetch(`${BASE}${CONFIG.SHEET_ID}?fields=sheets.properties`);
-  const sh = (meta.sheets||[]).find(s => s.properties.title === title);
-  return sh ? sh.properties.sheetId : null;
 }
 
 async function deleteUser(userID) {
@@ -2398,18 +2065,7 @@ async function deleteUser(userID) {
   if (!confirm(msg)) return;
   showLoading('Deleting user...');
   try {
-    const data = await sheetsGet('Users!A:A');
-    const rows = data.values || [];
-    const idx = rows.findIndex(r => r[0] === userID);
-    if (idx < 1) throw new Error('User row not found in sheet');
-    const gid = await getSheetGid('Users');
-    if (gid === null) throw new Error('Users sheet tab not found');
-    await gFetch(`${BASE}${CONFIG.SHEET_ID}:batchUpdate`, {
-      method: 'POST',
-      body: JSON.stringify({ requests: [{ deleteDimension: {
-        range: { sheetId: gid, dimension: 'ROWS', startIndex: idx, endIndex: idx + 1 }
-      }}]})
-    });
+    await api('deleteUser', { id: userID });
     toast(`${user.name} has been deleted.`,'ok');
   } catch (e) {
     hideLoading();
@@ -2486,56 +2142,21 @@ function openEditUserFull(email) {
 }
 
 async function saveEditUser(email) {
-  const data = await sheetsGet('Users!A:J');
-  const rows = data.values||[];
-  const idx = rows.findIndex(r=>r[2]===email);
-  if (idx < 1) { toast('User not found','err'); return; }
-
-  const oldRole = rows[idx][3]||'';
-  const oldBranch = rows[idx][5]||'';
+  const user = _users.find(u => u.email === email);
+  if (!user) { toast('User not found','err'); return; }
   const name = gv('eu-name');
-  const role = gv('eu-role');
   const primary = gv('eu-primary');
-  const approver = gv('eu-approver');
-  const active = gv('eu-active');
-  const wasActive = rows[idx][7]||'TRUE';
   const extraBranches = [...document.querySelectorAll('.eu-branch-cb:checked')].map(c=>c.value);
   const allBranches = [...new Set([primary,...extraBranches].filter(Boolean))].join('|');
-  const approverUser = _users.find(u=>u.email===approver);
-  const approverName = approverUser ? approverUser.name : approver||'your assigned approver';
-  const portalURL = window.location.href;
 
   showLoading('Saving...');
-  await sheetsUpdate(`Users!B${idx+1}:J${idx+1}`, [[name, email, role, allBranches, primary, approver, active, rows[idx][8]||'', rows[idx][9]||'']]);
-
-  // Send notification if role, branch, or active status changed
-  const roleChanged = role !== oldRole;
-  const branchChanged = primary !== oldBranch;
-  const reactivated = active === 'TRUE' && wasActive !== 'TRUE';
-
-  if (roleChanged || branchChanged || reactivated) {
-    await sendEmail(
-      email,
-      `Your Savard Procurement Portal account has been updated`,
-      emailTemplate(
-        `Account Updated`,
-        `<p style="font-size:14px;color:#374151;margin-bottom:16px">
-          Hi ${name.split(' ')[0]}, your Procurement Portal account has been updated by ${CURRENT_USER.name}.
-        </p>
-        <table style="width:100%;border-collapse:collapse;font-size:13px;margin-bottom:20px;background:#f9fafb;border-radius:8px;overflow:hidden">
-          ${roleChanged?`<tr><td style="padding:10px 14px;color:#6b7280;border-bottom:1px solid #e5e7eb">Role</td><td style="padding:10px 14px;font-weight:600;border-bottom:1px solid #e5e7eb">${oldRole} → <strong style="color:#0f1f3d">${role}</strong></td></tr>`:''}
-          ${branchChanged?`<tr><td style="padding:10px 14px;color:#6b7280;border-bottom:1px solid #e5e7eb">Branch</td><td style="padding:10px 14px;font-weight:600;border-bottom:1px solid #e5e7eb">${oldBranch} → <strong style="color:#0f1f3d">${primary}</strong></td></tr>`:''}
-          <tr><td style="padding:10px 14px;color:#6b7280">Approver</td><td style="padding:10px 14px;font-weight:600">${approverName}</td></tr>
-        </table>
-        ${reactivated?`<p style="font-size:14px;color:#059669;font-weight:600;margin-bottom:16px">Your account has been reactivated.</p>`:''}
-        <a href="${portalURL}" style="display:inline-block;background:#0f1f3d;color:#fff;padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:600;font-size:14px">Open Procurement Portal →</a>`,
-        `If you have questions about these changes, please <a href="https://savardgroup.zendesk.com/hc/en-us/requests/new" style="color:#2563eb;font-weight:600;text-decoration:underline">submit a support ticket</a>.`, null
-      ),
-      CONFIG.NOTIFY_FROM
-    );
-  }
-
-  toast(`${name} updated successfully.`, 'ok');
+  try {
+    await api('saveUser', {
+      id: user.id, name, email, role: gv('eu-role'),
+      branches: allBranches, primaryBranch: primary, approverEmail: gv('eu-approver'), active: gv('eu-active'),
+    });
+    toast(`${name} updated successfully.`, 'ok');
+  } catch (e) { hideLoading(); toast('Could not save user: ' + e.message, 'err'); return; }
   closePanel();
   await navigate('admin-panel');
   hideLoading();
@@ -2619,22 +2240,13 @@ async function saveBranch(id) {
 
   showLoading('Saving...');
   try {
-    if (id) {
-      // Edit existing — find row by id and overwrite B:F
-      const data = await sheetsGet('Branches!A:A');
-      const rows = data.values || [];
-      const idx = rows.findIndex(r => r[0] === id);
-      if (idx < 1) throw new Error('Branch not found in sheet');
-      await sheetsUpdate(`Branches!B${idx+1}:F${idx+1}`, [[name, primary, backup, active, type]]);
-      toast(`${name} updated.`,'ok');
-    } else {
-      // Guard against duplicate names
-      if (_branches.some(b => (b.name||'').toLowerCase() === name.toLowerCase())) {
-        hideLoading(); toast('A branch/department with that name already exists.','err'); return;
-      }
-      await appendRow('Branches', [genID('B'), name, primary, backup, active, type]);
-      toast(`${name} added.`,'ok');
+    if (!id && _branches.some(b => (b.name||'').toLowerCase() === name.toLowerCase())) {
+      hideLoading(); toast('A branch/department with that name already exists.','err'); return;
     }
+    const res = await api('saveBranch', {
+      id: id || undefined, name, primaryApproverEmail: primary, backupApproverEmail: backup, active, type,
+    });
+    toast(`${name} ${res.updated ? 'updated' : 'added'}.`,'ok');
   } catch(e) {
     hideLoading(); toast('Save failed: ' + e.message, 'err'); return;
   }
@@ -2682,16 +2294,9 @@ async function saveAssignApprover() {
 
   showLoading('Assigning approver...');
   try {
-    const data = await sheetsGet('Branches!A:A');
-    const rows = data.values || [];
-    for (const id of ids) {
-      const idx = rows.findIndex(r => r[0] === id);
-      if (idx < 1) continue;
-      // Column C = primaryApproverEmail
-      await sheetsUpdate(`Branches!C${idx+1}`, [[email]]);
-    }
+    const res = await api('assignApprover', { approverEmail: email, branchIds: ids });
     const who = _users.find(u=>u.email===email);
-    toast(`${who?who.name:email} assigned to ${ids.length} branch${ids.length>1?'es':''}.`,'ok');
+    toast(`${who?who.name:email} assigned to ${res.assigned} branch${res.assigned!==1?'es':''}.`,'ok');
   } catch(e) {
     hideLoading(); toast('Assignment failed: ' + e.message, 'err'); return;
   }
