@@ -24,7 +24,7 @@
       "https://www.googleapis.com/auth/userinfo.profile",
     ].join(" "),
     LEADERSHIP_THRESHOLD: 400,   // refreshed from the server on load
-    VERSION: "4.3.0",
+    VERSION: "4.4.0",
   };
 </script>
 
@@ -1362,13 +1362,22 @@ function closePanel() {
   itemCount = 1;
 }
 
+// Notify-audience options available in the comment box, by the current user's role.
+function commentNotifyOptions() {
+  var role = CURRENT_USER.role;
+  if (role === 'Requestor')       return ['Approver', 'Purchasing'];
+  if (role === 'Branch Approver') return ['Requestor', 'Purchasing'];
+  return ['Requestor', 'Approver', 'Purchasing', 'Leadership']; // Procurement Admin, Leadership, Finance, Super Admin
+}
+
 async function addComment(reqID) {
   const text = (document.getElementById('cmt-text')?.value || '').trim();
   const urgent = !!(document.getElementById('cmt-urgent') && document.getElementById('cmt-urgent').checked);
+  const notify = document.getElementById('cmt-notify')?.value || '';
   if (!text) { toast('Enter a comment first.', 'err'); return; }
   showLoading('Posting comment...');
   try {
-    await api('addComment', { reqID, text, urgent });
+    await api('addComment', { reqID, text, urgent, notify });
   } catch (e) { hideLoading(); toast('Could not post comment: ' + e.message, 'err'); return; }
   toast(urgent ? 'Urgent comment posted.' : 'Comment posted.', 'ok');
   await loadAllData();        // refresh comments (loadAllData hides the loader)
@@ -1497,11 +1506,17 @@ function openRequestDetail(reqID) {
           </div>
           <div class="fg">
             <textarea id="cmt-text" placeholder="Add a comment..." style="resize:vertical;min-height:54px"></textarea>
-            <div style="display:flex;align-items:center;justify-content:space-between;margin-top:8px">
+            <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-top:8px">
               <label style="display:flex;align-items:center;gap:6px;font-size:13px;color:var(--text);cursor:pointer">
                 <input type="checkbox" id="cmt-urgent" style="width:auto"/> Mark as urgent
               </label>
-              <button class="btn btn-primary btn-sm" onclick="addComment('${req.id}')"><i class="ti ti-send"></i> Comment</button>
+              <label style="display:flex;align-items:center;gap:6px;font-size:13px;color:var(--text)">
+                Notify:
+                <select id="cmt-notify" style="width:auto;padding:5px 8px;font-size:13px">
+                  ${commentNotifyOptions().map(o=>`<option value="${o}">${o}</option>`).join('')}
+                </select>
+              </label>
+              <button class="btn btn-primary btn-sm" style="margin-left:auto" onclick="addComment('${req.id}')"><i class="ti ti-send"></i> Comment</button>
             </div>
           </div>
         </div>
@@ -2442,31 +2457,4 @@ async function saveAssignApprover() {
 // ═══════════════════════════════════════════════════════════
 //  LOADING & TOAST
 // ═══════════════════════════════════════════════════════════
-function showLoading(msg) {
-  let ov = document.getElementById('loading-ov');
-  if (!ov) {
-    ov = document.createElement('div');
-    ov.id = 'loading-ov';
-    ov.className = 'loading-ov';
-    document.body.appendChild(ov);
-  }
-  ov.innerHTML = `<div class="spin-lg"></div><div class="ls">${msg||'Loading...'}</div>`;
-  ov.style.display = 'flex';
-}
-
-function hideLoading() {
-  const ov = document.getElementById('loading-ov');
-  if (ov) ov.style.display = 'none';
-}
-
-function toast(msg, type='ok') {
-  const icons = {ok:'ti-circle-check',err:'ti-circle-x',warn:'ti-alert-triangle'};
-  const t = document.createElement('div');
-  t.className = `toast ${type}`;
-  t.innerHTML = `<i class="ti ${icons[type]||'ti-info-circle'}" style="font-size:18px"></i>${msg}`;
-  document.getElementById('toast-container').appendChild(t);
-  setTimeout(() => t.remove(), 4500);
-}
-</script>
-</body>
-</html>
+function showL
