@@ -25,7 +25,7 @@
     ].join(" "),
     LEADERSHIP_THRESHOLD: 400,   // refreshed from the server on load
     SESSION_IDLE_MINUTES: 120,   // auto sign-out after this many minutes of no activity
-    VERSION: "4.5.0",
+    VERSION: "4.6.1",
   };
 </script>
 
@@ -874,7 +874,7 @@ function renderDashboard() {
   const total = _requests.length;
   const pending = _requests.filter(r=>r.status==='Pending Approval'||r.status==='Open').length;
   const completed = _requests.filter(r=>r.status==='Completed').length;
-  const spend = _requests.reduce((s,r)=>s+(parseFloat(r.totalAmount)||0),0);
+  const spend = _requests.filter(r=>r.status!=='Rejected').reduce((s,r)=>s+(parseFloat(r.totalAmount)||0),0);
 
   const sorted = [..._requests].sort((a,b) => {
     const da = new Date(a.submittedAt||0), db = new Date(b.submittedAt||0);
@@ -1158,19 +1158,21 @@ function renderReports() {
   const { scoped, myBranches, reqs, items } = getReportScope();
 
   const byBranch = {};
+  const rejectedIds = new Set(reqs.filter(r=>r.status==='Rejected').map(r=>r.id));
   reqs.forEach(r => {
+    if (r.status === 'Rejected') return;  // rejected requests are not spend
     byBranch[r.branch] = (byBranch[r.branch]||0) + (parseFloat(r.totalAmount)||0);
   });
   // Make sure every covered branch shows up, even with $0 spend.
   if (scoped) myBranches.forEach(b => { if (byBranch[b]===undefined) byBranch[b]=0; });
   const sorted = Object.entries(byBranch).sort((a,b)=>b[1]-a[1]);
   const max = sorted[0]?.[1]||1;
-  const totalSpend = reqs.reduce((s,r)=>s+(parseFloat(r.totalAmount)||0),0);
+  const totalSpend = reqs.filter(r=>r.status!=='Rejected').reduce((s,r)=>s+(parseFloat(r.totalAmount)||0),0);
 
   // Spend by item type, split into Travel vs Item Request groups.
   const travelTypes = ['Flight','Hotel','Car Rental','Bus'];
   const byType = {};
-  items.forEach(i=>{ byType[i.itemType] = (byType[i.itemType]||0) + (parseFloat(i.estimatedAmount)||0); });
+  items.forEach(i=>{ if (rejectedIds.has(i.requestID)) return; byType[i.itemType] = (byType[i.itemType]||0) + (parseFloat(i.estimatedAmount)||0); });
   const travelSpend = travelTypes.reduce((s,t)=>s+(byType[t]||0),0);
   const itemSpend = Object.entries(byType).filter(([t])=>!travelTypes.includes(t)).reduce((s,[,v])=>s+v,0);
   const quoteCount = reqs.filter(r=>isQuote(r)).length;
@@ -1281,22 +1283,23 @@ function exportReportsToExcel() {
       };
     });
 
-    // Sheet 2 — Spend by Branch
+    // Sheet 2 — Spend by Branch (rejected requests excluded from spend)
+    const rejectedIds = new Set(reqs.filter(r=>r.status==='Rejected').map(r=>r.id));
     const byBranch = {};
-    reqs.forEach(r => { byBranch[r.branch] = (byBranch[r.branch]||0) + n(r.totalAmount); });
+    reqs.forEach(r => { if (r.status==='Rejected') return; byBranch[r.branch] = (byBranch[r.branch]||0) + n(r.totalAmount); });
     if (scoped) myBranches.forEach(b => { if (byBranch[b]===undefined) byBranch[b]=0; });
     const branchRows = Object.entries(byBranch).sort((a,b)=>b[1]-a[1])
       .map(([b,v]) => ({ 'Branch / Dept': b||'Unknown', 'Total Spend': v }));
 
-    // Sheet 3 — Spend by Type
+    // Sheet 3 — Spend by Type (rejected requests excluded)
     const byType = {};
-    items.forEach(i => { byType[i.itemType] = (byType[i.itemType]||0) + n(i.estimatedAmount); });
+    items.forEach(i => { if (rejectedIds.has(i.requestID)) return; byType[i.itemType] = (byType[i.itemType]||0) + n(i.estimatedAmount); });
     const typeRows = Object.entries(byType).sort((a,b)=>b[1]-a[1])
       .map(([t,v]) => ({ 'Type': t, 'Total Spend': v }));
 
     // Sheet 4 — Summary
     const travelTypes = ['Flight','Hotel','Car Rental','Bus'];
-    const totalSpend = reqs.reduce((s,r)=>s+n(r.totalAmount),0);
+    const totalSpend = reqs.filter(r=>r.status!=='Rejected').reduce((s,r)=>s+n(r.totalAmount),0);
     const travelSpend = travelTypes.reduce((s,t)=>s+(byType[t]||0),0);
     const itemSpend = Object.entries(byType).filter(([t])=>!travelTypes.includes(t)).reduce((s,[,v])=>s+v,0);
     const summaryRows = [
@@ -1478,7 +1481,7 @@ function commentNotifyOptions() {
 async function addComment(reqID) {
   const text = (document.getElementById('cmt-text')?.value || '').trim();
   const urgent = !!(document.getElementById('cmt-urgent') && document.getElementById('cmt-urgent').checked);
-  const notify = document.getElementById('cmt-notify')?.value || '';
+  const notify = [...(document.getElementById('cmt-notify')?.selectedOptions || [])].map(o => o.value);
   if (!text) { toast('Enter a comment first.', 'err'); return; }
   showLoading('Posting comment...');
   try {
@@ -1615,11 +1618,14 @@ function openRequestDetail(reqID) {
               <label style="display:flex;align-items:center;gap:6px;font-size:13px;color:var(--text);cursor:pointer">
                 <input type="checkbox" id="cmt-urgent" style="width:auto"/> Mark as urgent
               </label>
-              <label style="display:flex;align-items:center;gap:6px;font-size:13px;color:var(--text)">
+              <label style="display:flex;align-items:flex-start;gap:6px;font-size:13px;color:var(--text)">
                 Notify:
-                <select id="cmt-notify" style="width:auto;padding:5px 8px;font-size:13px">
-                  ${commentNotifyOptions().map(o=>`<option value="${o}">${o}</option>`).join('')}
-                </select>
+                <span style="display:flex;flex-direction:column;gap:2px">
+                  <select id="cmt-notify" multiple size="${commentNotifyOptions().length}" style="width:auto;padding:4px 8px;font-size:13px;height:auto">
+                    ${commentNotifyOptions().map((o,i)=>`<option value="${o}"${i===0?' selected':''}>${o}</option>`).join('')}
+                  </select>
+                  <span class="hint" style="font-size:11px">Ctrl/Cmd-click to pick more than one</span>
+                </span>
               </label>
               <button class="btn btn-primary btn-sm" style="margin-left:auto" onclick="addComment('${req.id}')"><i class="ti ti-send"></i> Comment</button>
             </div>
@@ -1710,13 +1716,6 @@ function openNewRequest() {
               <input id="nf-file" type="file" accept="image/*,application/pdf,.png,.jpg,.jpeg,.gif,.webp,.heic" onchange="onFilePicked()"/>
               <span class="hint" id="nf-file-hint">Optional — flight confirmation, photo of the item, receipt, etc. (max 10 MB)</span></div>
           </div>
-          <div class="fr full">
-            <div class="fg"><label>CC Teammates</label>
-              <select id="nf-cc" multiple size="4" style="height:auto;padding:6px">
-                ${_users.filter(u=>u.active!=='FALSE' && u.email!==CURRENT_USER.email).sort((a,b)=>a.name.localeCompare(b.name)).map(u=>`<option value="${u.email}">${u.name} (${u.email})</option>`).join('')}
-              </select>
-              <span class="hint">Optional — CC'd teammates can view this request, add comments, and get notified. Hold Ctrl/Cmd to pick several.</span></div>
-          </div>
         </div>
         <div id="nf-dynamic"></div>
         <div class="fs-sec" id="nf-billing">
@@ -1769,9 +1768,7 @@ function isQuoteForm() {
   return el && el.value === 'Quote Request';
 }
 function amtLabel() {
-  return isQuoteForm()
-    ? 'Estimated Amount ($) <span class="hint" style="font-weight:400">— optional for quotes</span>'
-    : 'Estimated Amount ($) <span class="req">*</span>';
+  return 'Estimated Amount ($) <span class="hint" style="font-weight:400">- optional</span>';
 }
 
 // Person/recipient block — full set for travel, lean for item requests.
@@ -1887,8 +1884,7 @@ async function collectAndSubmit() {
   const root = document.getElementById('nf-dynamic');
 
   const amount = parseFloat(root.querySelector('.item-amount')?.value||0);
-  // Amount is required for purchase requests, optional for quote requests.
-  if (!amount && !quote) { toast('An estimated amount is required.','err'); return; }
+  // Estimated amount is optional for all request types.
   const qty = root.querySelector('.item-qty')?.value || '';
   let detail = root.querySelector('.item-detail,.item-dep')?.value||'';
   if (qty && parseInt(qty,10) > 1 && detail) detail = `Qty ${qty} — ${detail}`;
@@ -1947,7 +1943,6 @@ async function collectAndSubmit() {
     comments: gv('nf-comments'),
     link: gv('nf-link'),
     attachmentLink,
-    cc: [...(document.getElementById('nf-cc')?.selectedOptions||[])].map(o=>o.value),
     items: [item],
   });
   hideLoading();
