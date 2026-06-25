@@ -25,7 +25,7 @@
     ].join(" "),
     LEADERSHIP_THRESHOLD: 400,   // refreshed from the server on load
     SESSION_IDLE_MINUTES: 120,   // auto sign-out after this many minutes of no activity
-    VERSION: "4.6.2",
+    VERSION: "4.6.3",
   };
 </script>
 
@@ -1459,7 +1459,7 @@ function commentNotifyOptions() {
 async function addComment(reqID) {
   const text = (document.getElementById('cmt-text')?.value || '').trim();
   const urgent = !!(document.getElementById('cmt-urgent') && document.getElementById('cmt-urgent').checked);
-  const notify = [...(document.getElementById('cmt-notify')?.selectedOptions || [])].map(o => o.value);
+  const notify = [...document.querySelectorAll('.cmt-notify-cb:checked')].map(c => c.value);
   if (!text) { toast('Enter a comment first.', 'err'); return; }
   showLoading('Posting comment...');
   try {
@@ -1592,18 +1592,16 @@ function openRequestDetail(reqID) {
           </div>
           <div class="fg">
             <textarea id="cmt-text" placeholder="Add a comment..." style="resize:vertical;min-height:54px"></textarea>
-            <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-top:8px">
+            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:10px">
+              <span style="font-size:13px;font-weight:600;color:var(--text)">Notify:</span>
+              ${commentNotifyOptions().map((o,i)=>`
+              <label style="display:flex;align-items:center;gap:5px;font-size:13px;color:var(--text);cursor:pointer;border:1px solid var(--border);border-radius:6px;padding:4px 9px">
+                <input type="checkbox" class="cmt-notify-cb" value="${o}" style="width:auto"${i===0?' checked':''}/> ${o}
+              </label>`).join('')}
+            </div>
+            <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-top:10px">
               <label style="display:flex;align-items:center;gap:6px;font-size:13px;color:var(--text);cursor:pointer">
                 <input type="checkbox" id="cmt-urgent" style="width:auto"/> Mark as urgent
-              </label>
-              <label style="display:flex;align-items:flex-start;gap:6px;font-size:13px;color:var(--text)">
-                Notify:
-                <span style="display:flex;flex-direction:column;gap:2px">
-                  <select id="cmt-notify" multiple size="${commentNotifyOptions().length}" style="width:auto;padding:4px 8px;font-size:13px;height:auto">
-                    ${commentNotifyOptions().map((o,i)=>`<option value="${o}"${i===0?' selected':''}>${o}</option>`).join('')}
-                  </select>
-                  <span class="hint" style="font-size:11px">Ctrl/Cmd-click to pick more than one</span>
-                </span>
               </label>
               <button class="btn btn-primary btn-sm" style="margin-left:auto" onclick="addComment('${req.id}')"><i class="ti ti-send"></i> Comment</button>
             </div>
