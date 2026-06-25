@@ -24,7 +24,7 @@
       "https://www.googleapis.com/auth/userinfo.profile",
     ].join(" "),
     LEADERSHIP_THRESHOLD: 400,   // refreshed from the server on load
-    VERSION: "4.1.0",
+    VERSION: "4.3.0",
   };
 </script>
 
@@ -85,6 +85,9 @@ body{font-family:'Segoe UI',system-ui,sans-serif;background:var(--bg);color:var(
 /* NOTIF BTN */
 .nb-btn{position:relative;background:none;border:none;cursor:pointer;padding:6px;color:var(--muted)}
 .nb-dot{position:absolute;top:4px;right:4px;width:8px;height:8px;background:var(--err);border-radius:50%;border:2px solid var(--card)}
+.nb-dot.urgent{background:#f5b301}
+.nb-btn.bell-urgent{color:#f5b301;animation:bellShake 0.9s ease-in-out infinite}
+@keyframes bellShake{0%,100%{transform:rotate(0)}15%{transform:rotate(-12deg)}30%{transform:rotate(10deg)}45%{transform:rotate(-8deg)}60%{transform:rotate(6deg)}75%{transform:rotate(-3deg)}}
 
 /* STATS */
 .sg{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:14px;margin-bottom:24px}
@@ -513,6 +516,7 @@ function fileToBase64(file) {
 let _requests = [];
 let _items = [];
 let _approvals = [];
+let _comments = [];
 let _users = [];
 let _branches = [];
 let _loading = false;
@@ -524,10 +528,12 @@ async function loadAllData() {
     _requests  = d.requests  || [];
     _items     = d.items     || [];
     _approvals = d.approvals || [];
+    _comments  = d.comments  || [];
     _users     = d.users     || [];
     _branches  = d.branches  || [];
     if (d.settings && d.settings.LEADERSHIP_THRESHOLD) CONFIG.LEADERSHIP_THRESHOLD = d.settings.LEADERSHIP_THRESHOLD;
     if (d.me) CURRENT_USER = d.me;
+    try { updateBell(); } catch(e) {}
     return true;
   } catch(e) {
     if (e.message === 'access_pending' || e.message === 'account_inactive') {
@@ -603,6 +609,7 @@ function getProcurementQueue() {
 //  NAVIGATION
 // ═══════════════════════════════════════════════════════════
 let currentPage = 'dashboard';
+let _dashSort = 'desc';   // dashboard Recent Requests sort by date: 'desc' = newest first
 const PAGES = {
   dashboard:            { title:'Dashboard', sub:'Overview & activity' },
   'my-requests':        { title:'My Requests', sub:'Requests you have submitted' },
@@ -764,7 +771,11 @@ function renderDashboard() {
   const completed = _requests.filter(r=>r.status==='Completed').length;
   const spend = _requests.reduce((s,r)=>s+(parseFloat(r.totalAmount)||0),0);
 
-  const recentRows = _requests.slice(-10).reverse().map(r => {
+  const sorted = [..._requests].sort((a,b) => {
+    const da = new Date(a.submittedAt||0), db = new Date(b.submittedAt||0);
+    return _dashSort === 'asc' ? da - db : db - da;
+  });
+  const recentRows = sorted.slice(0,10).map(r => {
     const total = parseFloat(r.totalAmount)||0;
     return `<tr class="cr" onclick="openRequestDetail('${r.id}')">
       <td><span style="font-weight:600;color:var(--navy)">${r.id}</span></td>
@@ -778,6 +789,7 @@ function renderDashboard() {
 
   const canSeeSpend = ['Procurement Admin','Finance','Leadership','Super Admin'].includes(CURRENT_USER.role);
   const canSeeThreshold = ['Procurement Admin','Leadership','Finance','Super Admin'].includes(CURRENT_USER.role);
+  const isSuper = CURRENT_USER.role === 'Super Admin';
 
   return `
   <div class="sg">
@@ -787,11 +799,30 @@ function renderDashboard() {
     ${canSeeSpend ? `<div class="sc"><div class="sl"><i class="ti ti-currency-dollar" style="font-size:14px"></i>Total Spend</div><div class="sv">${fmtAmt(spend)}</div></div>` : ''}
     ${canSeeThreshold ? `<div class="sc"><div class="sl"><i class="ti ti-alert-triangle" style="font-size:14px"></i>Threshold</div><div class="sv">$${CONFIG.LEADERSHIP_THRESHOLD}</div><div class="ss">Leadership approval limit</div></div>` : ''}
   </div>
+  ${isSuper ? `
+  <div style="display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap">
+    <a class="btn btn-outline btn-sm" href="https://console.cloud.google.com/billing?project=savard-procurement-portal" target="_blank" rel="noopener"><i class="ti ti-receipt-2"></i> Google Cloud Billing</a>
+    <a class="btn btn-outline btn-sm" href="https://console.cloud.google.com/billing/budgets?project=savard-procurement-portal" target="_blank" rel="noopener"><i class="ti ti-alert-triangle"></i> Budget &amp; Alerts</a>
+    <a class="btn btn-outline btn-sm" href="https://console.cloud.google.com/run/detail/us-central1/procurement-api/metrics?project=savard-procurement-portal" target="_blank" rel="noopener"><i class="ti ti-activity"></i> Function Usage</a>
+  </div>` : ''}
   <div class="tw">
-    <div class="th-row"><span class="tt">Recent Requests</span><button class="btn btn-outline btn-sm" onclick="navigate('all-requests')">View all</button></div>
+    <div class="th-row">
+      <span class="tt">Recent Requests</span>
+      <div style="display:flex;gap:8px">
+        <button class="btn btn-outline btn-sm" onclick="toggleDashSort()"><i class="ti ti-arrows-sort"></i> Date: ${_dashSort==='desc'?'Newest first':'Oldest first'}</button>
+        <button class="btn btn-outline btn-sm" onclick="navigate('all-requests')">View all</button>
+      </div>
+    </div>
     <table><thead><tr><th>ID</th><th>Submitted By</th><th>Branch</th><th>Total</th><th>Status</th><th>Date</th></tr></thead>
     <tbody>${recentRows||'<tr><td colspan="6" style="text-align:center;color:var(--muted);padding:30px">No requests yet</td></tr>'}</tbody></table>
   </div>`;
+}
+
+// Flip the dashboard's date sort and re-render in place (no server reload).
+function toggleDashSort() {
+  _dashSort = _dashSort === 'asc' ? 'desc' : 'asc';
+  const c = document.getElementById('main-content');
+  if (c) c.innerHTML = renderDashboard();
 }
 
 function renderPendingApprovals() {
@@ -1305,9 +1336,9 @@ async function leadershipDecision(reqID, decision) {
   await navigate(currentPage);
 }
 
-async function markBooked(reqID, confirmationLink, note) {
+async function markBooked(reqID, confirmationLink, note, paymentMethod) {
   try {
-    await api('book', { reqID, confirmationLink, note });
+    await api('book', { reqID, confirmationLink, note, paymentMethod });
     toast('Marked as booked! Confirmation email sent to requestor.', 'ok');
   } catch (e) { toast('Could not mark booked: ' + e.message, 'err'); return; }
   closePanel();
@@ -1331,11 +1362,25 @@ function closePanel() {
   itemCount = 1;
 }
 
+async function addComment(reqID) {
+  const text = (document.getElementById('cmt-text')?.value || '').trim();
+  const urgent = !!(document.getElementById('cmt-urgent') && document.getElementById('cmt-urgent').checked);
+  if (!text) { toast('Enter a comment first.', 'err'); return; }
+  showLoading('Posting comment...');
+  try {
+    await api('addComment', { reqID, text, urgent });
+  } catch (e) { hideLoading(); toast('Could not post comment: ' + e.message, 'err'); return; }
+  toast(urgent ? 'Urgent comment posted.' : 'Comment posted.', 'ok');
+  await loadAllData();        // refresh comments (loadAllData hides the loader)
+  openRequestDetail(reqID);   // reopen with the new comment visible
+}
+
 function openRequestDetail(reqID) {
   const req = _requests.find(r=>r.id===reqID);
   if (!req) { toast('Request not found','err'); return; }
   const items = getRequestItems(reqID);
   const approvals = getRequestApprovals(reqID);
+  const reqComments = _comments.filter(c=>c.requestID===reqID).sort((a,b)=>new Date(a.createdAt||0)-new Date(b.createdAt||0));
   const total = parseFloat(req.totalAmount)||0;
   const over = total >= CONFIG.LEADERSHIP_THRESHOLD;
 
@@ -1435,11 +1480,31 @@ function openRequestDetail(reqID) {
           </div>
         </div>
 
-        ${req.comments?`
         <div class="fs-sec">
-          <div class="fs-title">Comments</div>
-          <div style="font-size:13px;color:var(--muted);background:var(--bg);border-radius:7px;padding:10px 14px;border-left:3px solid var(--border)">${req.comments}</div>
-        </div>`:''}
+          <div class="fs-title">Comments &amp; Activity</div>
+          ${req.cc?`<div style="font-size:12px;color:var(--muted);margin-bottom:8px"><i class="ti ti-users" style="font-size:12px"></i> CC: ${req.cc.split('|').filter(Boolean).join(', ')}</div>`:''}
+          ${req.comments?`<div style="font-size:13px;color:var(--muted);background:var(--bg);border-radius:7px;padding:10px 14px;border-left:3px solid var(--border);margin-bottom:10px"><div style="font-size:10px;text-transform:uppercase;letter-spacing:.5px;color:var(--xs);margin-bottom:3px">Original note</div>${req.comments}</div>`:''}
+          <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:12px">
+            ${reqComments.length?reqComments.map(c=>`
+              <div style="background:${c.urgent==='TRUE'?'var(--warn-bg)':'var(--bg)'};border-radius:7px;padding:10px 14px;border-left:3px solid ${c.urgent==='TRUE'?'var(--warn)':'var(--border)'}">
+                <div style="display:flex;align-items:center;gap:6px;margin-bottom:3px">
+                  <span style="font-weight:600;font-size:13px">${c.authorName||c.authorEmail}</span>
+                  ${c.urgent==='TRUE'?'<span class="bdg b-warn" style="font-size:10px"><i class="ti ti-alert-triangle" style="font-size:10px"></i> Urgent</span>':''}
+                  <span style="font-size:11px;color:var(--xs);margin-left:auto">${fmtDate(c.createdAt)}</span>
+                </div>
+                <div style="font-size:13px;color:var(--text);white-space:pre-wrap">${(c.text||'').split('<').join('&lt;')}</div>
+              </div>`).join(''):'<div style="font-size:12px;color:var(--muted);padding:4px 0">No comments yet.</div>'}
+          </div>
+          <div class="fg">
+            <textarea id="cmt-text" placeholder="Add a comment..." style="resize:vertical;min-height:54px"></textarea>
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-top:8px">
+              <label style="display:flex;align-items:center;gap:6px;font-size:13px;color:var(--text);cursor:pointer">
+                <input type="checkbox" id="cmt-urgent" style="width:auto"/> Mark as urgent
+              </label>
+              <button class="btn btn-primary btn-sm" onclick="addComment('${req.id}')"><i class="ti ti-send"></i> Comment</button>
+            </div>
+          </div>
+        </div>
       </div>
 
       ${canApprove?`
@@ -1525,13 +1590,18 @@ function openNewRequest() {
               <input id="nf-file" type="file" accept="image/*,application/pdf,.png,.jpg,.jpeg,.gif,.webp,.heic" onchange="onFilePicked()"/>
               <span class="hint" id="nf-file-hint">Optional — flight confirmation, photo of the item, receipt, etc. (max 10 MB)</span></div>
           </div>
+          <div class="fr full">
+            <div class="fg"><label>CC Teammates</label>
+              <select id="nf-cc" multiple size="4" style="height:auto;padding:6px">
+                ${_users.filter(u=>u.active!=='FALSE' && u.email!==CURRENT_USER.email).sort((a,b)=>a.name.localeCompare(b.name)).map(u=>`<option value="${u.email}">${u.name} (${u.email})</option>`).join('')}
+              </select>
+              <span class="hint">Optional — CC'd teammates can view this request, add comments, and get notified. Hold Ctrl/Cmd to pick several.</span></div>
+          </div>
         </div>
         <div id="nf-dynamic"></div>
         <div class="fs-sec" id="nf-billing">
           <div class="fs-title">Billing &amp; Deductions</div>
-          <div class="fr">
-            <div class="fg"><label>Payment Method</label>
-              <select id="nf-payment"><option>Card Payment</option><option>Invoiced</option><option>In Stock</option></select></div>
+          <div class="fr full">
             <div class="fg"><label>Customer Billed?</label><select id="nf-custbilled"><option>NO</option><option>YES</option></select></div>
           </div>
           <div class="fr">
@@ -1749,7 +1819,7 @@ async function collectAndSubmit() {
     travelerEmail: gv('nf-travemail'),
     travelerDOB: gv('nf-travdob'),
     govIDLink: gv('nf-govid'),
-    paymentMethod: gv('nf-payment'),
+    paymentMethod: '',
     customerBilled: gv('nf-custbilled'),
     eeDeduction: gv('nf-eeded')==='YES' ? (gv('nf-dedtype')+' / '+gv('nf-freq')) : 'NO',
     customerName: gv('nf-custname'),
@@ -1757,6 +1827,7 @@ async function collectAndSubmit() {
     comments: gv('nf-comments'),
     link: gv('nf-link'),
     attachmentLink,
+    cc: [...(document.getElementById('nf-cc')?.selectedOptions||[])].map(o=>o.value),
     items: [item],
   });
   hideLoading();
@@ -1797,6 +1868,18 @@ function openBookingPanel(reqID) {
           <div><div class="dl">Requestor</div><div class="dv">${req.submitterName}</div></div>
         </div>
         <div class="fg" style="margin-bottom:16px">
+          <label>Payment Method</label>
+          ${(() => {
+            const cat = (getRequestItems(req.id)[0]||{}).purchaseType || 'Travel';
+            const opts = cat === 'Item Request' ? ['Card Payment','Invoiced','In Stock'] : ['Card Payment'];
+            return `<select id="book-payment">
+              <option value="">Select…</option>
+              ${opts.map(o=>`<option${req.paymentMethod===o?' selected':''}>${o}</option>`).join('')}
+            </select>
+            <span class="hint">${cat === 'Item Request' ? 'How this purchase was paid for' : 'Travel purchases are card payment only'}</span>`;
+          })()}
+        </div>
+        <div class="fg" style="margin-bottom:16px">
           <label>Confirmation Document (Google Drive Link)</label>
           <input id="book-conf" type="url" placeholder="https://drive.google.com/..."/>
           <span class="hint">Upload booking confirmation to Drive and paste the link here</span>
@@ -1812,7 +1895,7 @@ function openBookingPanel(reqID) {
       </div>
       <div class="pf">
         <button class="btn btn-outline" onclick="closePanel()">Cancel</button>
-        <button class="btn btn-primary" onclick="markBooked('${req.id}',document.getElementById('book-conf').value,document.getElementById('book-note').value)">
+        <button class="btn btn-primary" onclick="markBooked('${req.id}',document.getElementById('book-conf').value,document.getElementById('book-note').value,document.getElementById('book-payment').value)">
           <i class="ti ti-send"></i> Confirm Booking & Notify
         </button>
       </div>
@@ -1884,7 +1967,43 @@ function openEditUser(email) {
   openEditUserFull(email);
 }
 
+// ── Notification bell ──
+function getMyUrgentComments() {
+  const myEmail = (CURRENT_USER.email||'').toLowerCase();
+  const reqById = {}; _requests.forEach(r => reqById[r.id] = r);
+  return _comments
+    .filter(c => c.urgent === 'TRUE' && (c.authorEmail||'').toLowerCase() !== myEmail && reqById[c.requestID])
+    .sort((a,b) => new Date(b.createdAt||0) - new Date(a.createdAt||0));
+}
+function seenUrgentSet() {
+  try { return new Set(JSON.parse(localStorage.getItem('savard_seen_urgent') || '[]')); }
+  catch(e) { return new Set(); }
+}
+function markUrgentSeen(ids) {
+  try {
+    const s = seenUrgentSet(); ids.forEach(id => s.add(id));
+    localStorage.setItem('savard_seen_urgent', JSON.stringify([...s]));
+  } catch(e) {}
+}
+function updateBell() {
+  const dot = document.getElementById('notif-dot');
+  if (!dot) return;
+  const btn = dot.closest('.nb-btn');
+  const pending = (typeof getPendingApprovals === 'function' && ['Branch Approver','Super Admin'].includes(CURRENT_USER.role)) ? getPendingApprovals() : [];
+  const leadership = (typeof getLeadershipQueue === 'function' && ['Leadership','Super Admin'].includes(CURRENT_USER.role)) ? getLeadershipQueue() : [];
+  const urgent = getMyUrgentComments();
+  const seen = seenUrgentSet();
+  const unseenUrgent = urgent.filter(c => !seen.has(c.id));
+  const hasAny = pending.length || leadership.length || urgent.length;
+  dot.style.display = hasAny ? 'block' : 'none';
+  if (unseenUrgent.length) { dot.classList.add('urgent'); if (btn) btn.classList.add('bell-urgent'); }
+  else { dot.classList.remove('urgent'); if (btn) btn.classList.remove('bell-urgent'); }
+}
+
 function openNotifs() {
+  const urgent = getMyUrgentComments();
+  const reqById = {}; _requests.forEach(r => reqById[r.id] = r);
+  const pend = (['Branch Approver','Super Admin'].includes(CURRENT_USER.role) && typeof getPendingApprovals==='function') ? getPendingApprovals().slice(0,5) : [];
   const ov = document.getElementById('overlays');
   ov.innerHTML = `
   <div class="po" onclick="if(event.target===this)closePanel()">
@@ -1892,7 +2011,19 @@ function openNotifs() {
       <div class="ph"><i class="ti ti-bell" style="font-size:20px;color:var(--navy)"></i><h2>Notifications</h2>
         <button class="pc" onclick="closePanel()"><i class="ti ti-x" style="font-size:18px"></i></button></div>
       <div class="pb" style="padding:0">
-        ${getPendingApprovals().slice(0,5).map(r=>`
+        ${urgent.slice(0,8).map(c=>{
+          const r = reqById[c.requestID];
+          return `<div style="padding:12px 16px;border-bottom:1px solid var(--border);display:flex;gap:10px;align-items:flex-start;background:var(--warn-bg)">
+            <div style="width:32px;height:32px;border-radius:50%;background:#fff3cd;display:flex;align-items:center;justify-content:center;flex-shrink:0"><i class="ti ti-alert-triangle" style="color:#d97706;font-size:15px"></i></div>
+            <div style="min-width:0">
+              <div style="font-size:13px;font-weight:600">Urgent comment · ${c.requestID}</div>
+              <div style="font-size:12px;color:var(--muted);margin-top:2px">${(c.authorName||c.authorEmail)} · ${r?r.travelerName:''}</div>
+              <div style="font-size:12px;color:var(--text);margin-top:3px">${(c.text||'').split('<').join('&lt;').slice(0,90)}</div>
+            </div>
+            <button class="btn btn-outline btn-sm" style="margin-left:auto" onclick="closePanel();openRequestDetail('${c.requestID}')">View</button>
+          </div>`;
+        }).join('')}
+        ${pend.map(r=>`
         <div style="padding:12px 16px;border-bottom:1px solid var(--border);display:flex;gap:10px;align-items:flex-start;background:var(--info-bg)">
           <div style="width:32px;height:32px;border-radius:50%;background:var(--warn-bg);display:flex;align-items:center;justify-content:center;flex-shrink:0"><i class="ti ti-clipboard-check" style="color:var(--warn);font-size:15px"></i></div>
           <div>
@@ -1901,11 +2032,15 @@ function openNotifs() {
             <div style="font-size:11px;color:var(--xs);margin-top:3px">${fmtDate(r.submittedAt)}</div>
           </div>
           <button class="btn btn-outline btn-sm" style="margin-left:auto" onclick="closePanel();openRequestDetail('${r.id}')">Review</button>
-        </div>`).join('') || '<div style="padding:24px;text-align:center;color:var(--muted);font-size:13px">No pending notifications</div>'}
+        </div>`).join('')}
+        ${(!urgent.length && !pend.length) ? '<div style="padding:24px;text-align:center;color:var(--muted);font-size:13px">No pending notifications</div>' : ''}
       </div>
       <div class="pf"><button class="btn btn-outline" onclick="closePanel()">Close</button></div>
     </div>
   </div>`;
+  // Opening the panel acknowledges current urgent items — calm the bell.
+  markUrgentSeen(urgent.map(c=>c.id));
+  updateBell();
 }
 
 function renderAdminPanel() {
