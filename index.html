@@ -25,7 +25,7 @@
     ].join(" "),
     LEADERSHIP_THRESHOLD: 400,   // refreshed from the server on load
     SESSION_IDLE_MINUTES: 120,   // auto sign-out after this many minutes of no activity
-    VERSION: "4.6.1",
+    VERSION: "4.6.2",
   };
 </script>
 
@@ -723,7 +723,7 @@ const PAGES = {
   queue:                { title:'Procurement Queue', sub:'Approved requests ready to book' },
   'all-requests':       { title:'All Requests', sub:'Full request history' },
   'leadership-approvals':{ title:'Leadership Approvals', sub:'High-value requests awaiting sign-off' },
-  users:                { title:'User Management', sub:'Manage users, roles & branch assignments' },
+  users:                { title:'User Management', sub:'Manage users, roles & branch assignments' },  // deprecated: merged into Admin Panel
   'approval-rules':     { title:'Approval Rules', sub:'Configure workflow and routing' },
   reports:              { title:'Reports & Spend', sub:'Analytics across all branches' },
   'spend-threshold':    { title:'Spend Threshold', sub:'Leadership approval limit' },
@@ -742,7 +742,7 @@ const ROLE_NAV = {
   'Procurement Admin':[null,['dashboard'],['Booking',['queue']],['Requests',['new-request','all-requests']],['Admin',['spend-threshold','audit-log']]],
   Leadership:        [null,['dashboard'],['Approvals',['leadership-approvals']],['Requests',['all-requests']],['Admin',['spend-threshold','audit-log']]],
   Finance:           [null,['dashboard'],['Data',['all-requests']],['Admin',['spend-threshold','audit-log']]],
-  'Super Admin':     [null,['dashboard'],['Approvals',['pending-approvals']],['Operations',['new-request','all-requests']],['Administration',['users','approval-rules','reports','spend-threshold','audit-log','admin-panel']]],
+  'Super Admin':     [null,['dashboard'],['Approvals',['pending-approvals']],['Operations',['new-request','all-requests']],['Administration',['approval-rules','reports','spend-threshold','audit-log','admin-panel']]],
 };
 
 function renderNav() {
@@ -802,7 +802,6 @@ function renderPage() {
     case 'all-requests': c.innerHTML = renderRequestTable(_requests, 'All Requests'); break;
     case 'queue': c.innerHTML = renderQueue(); break;
     case 'leadership-approvals': c.innerHTML = renderLeadershipApprovals(); break;
-    case 'users': c.innerHTML = renderUsers(); break;
     case 'approval-rules': c.innerHTML = renderApprovalRules(); break;
     case 'reports': c.innerHTML = renderReports(); break;
     case 'spend-threshold': c.innerHTML = renderSpendThreshold(); break;
@@ -1023,27 +1022,6 @@ function renderLeadershipApprovals() {
       </div>
     </div>`;
   }).join('')}`;
-}
-
-function renderUsers() {
-  return `
-  <div class="sh"><h3>All Users</h3><button class="btn btn-primary" onclick="openAddUser()"><i class="ti ti-plus"></i> Add User</button></div>
-  <div class="tw">
-    <div class="th-row">
-      <div class="sb-box"><i class="ti ti-search" style="color:var(--muted);font-size:15px"></i><input placeholder="Search users..." /></div>
-      <select class="fs"><option>All Roles</option><option>Requestor</option><option>Branch Approver</option><option>Procurement Admin</option><option>Leadership</option><option>Finance</option><option>Super Admin</option></select>
-    </div>
-    ${_users.map(u=>`
-    <div class="ur-row">
-      <div class="ur-av">${(u.name||'?').split(' ').map(n=>n[0]).join('').slice(0,2).toUpperCase()}</div>
-      <div class="ur-ud"><div class="un">${u.name}</div><div class="ub">${u.email}</div></div>
-      <div class="bt">${(u.branches||'').split('|').map(b=>`<span class="btag">${b}</span>`).join('')}</div>
-      <span class="bdg ${u.role==='Super Admin'?'b-pur':u.role==='Leadership'?'b-gold':u.role==='Finance'?'b-ok':u.role==='Procurement Admin'?'b-info':u.role==='Branch Approver'?'b-warn':'b-gray'}" style="margin-left:8px">${u.role}</span>
-      <div style="margin-left:auto;display:flex;gap:6px">
-        <button class="btn btn-outline btn-sm" onclick="openEditUser('${u.email}')"><i class="ti ti-edit"></i> Edit</button>
-      </div>
-    </div>`).join('')}
-  </div>`;
 }
 
 function renderSpendThreshold() {
@@ -2076,10 +2054,6 @@ async function saveNewUser() {
   closePanel();
   await navigate('admin-panel');
   hideLoading();
-}
-
-function openEditUser(email) {
-  openEditUserFull(email);
 }
 
 // ── Notification bell ──
