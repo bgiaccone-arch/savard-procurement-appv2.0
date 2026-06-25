@@ -24,7 +24,8 @@
       "https://www.googleapis.com/auth/userinfo.profile",
     ].join(" "),
     LEADERSHIP_THRESHOLD: 400,   // refreshed from the server on load
-    VERSION: "4.4.0",
+    SESSION_IDLE_MINUTES: 120,   // auto sign-out after this many minutes of no activity
+    VERSION: "4.5.0",
   };
 </script>
 
@@ -359,28 +360,128 @@ let ACCESS_TOKEN = null;
 let TOKEN_EXPIRY = 0;
 let CURRENT_USER = null; // from Users sheet
 let CURRENT_PROFILE = null; // from Google
+let TOKEN_CLIENT = null;     // shared Google token client (created once)
+let IDLE_TIMER = null;       // inactivity sign-out timer
+let _lastActWrite = 0;       // throttle for activity writes
+
+// ── Session persistence ──
+// The access token + expiry + last-activity time are kept in localStorage so a
+// page refresh restores the session instead of forcing a new Google sign-in.
+function saveSession() {
+  try { localStorage.setItem('savard_session', JSON.stringify({ token: ACCESS_TOKEN, expiry: TOKEN_EXPIRY, lastActivity: Date.now() })); } catch(e) {}
+}
+function loadSession() { try { return JSON.parse(localStorage.getItem('savard_session') || 'null'); } catch(e) { return null; } }
+function clearSession() { try { localStorage.removeItem('savard_session'); } catch(e) {} }
+
+// One reusable token client; callbacks are reassigned per request.
+function ensureTokenClient(cb, errcb) {
+  if (!TOKEN_CLIENT) {
+    TOKEN_CLIENT = google.accounts.oauth2.initTokenClient({
+      client_id: CONFIG.CLIENT_ID, scope: CONFIG.SCOPES, callback: function(){},
+    });
+  }
+  TOKEN_CLIENT.callback = cb;
+  TOKEN_CLIENT.error_callback = errcb || function(){};
+  return TOKEN_CLIENT;
+}
+
+// Acquire a token. silent=true asks Google for one with no UI (used on refresh
+// and to renew an expiring token mid-session); silent=false shows the prompt.
+function acquireToken(silent) {
+  return new Promise(function(resolve, reject) {
+    var done = false;
+    var client = ensureTokenClient(
+      function(resp) {
+        if (done) return; done = true;
+        if (resp && resp.access_token) {
+          ACCESS_TOKEN = resp.access_token;
+          TOKEN_EXPIRY = Date.now() + ((resp.expires_in || 3600) * 1000);
+          saveSession();
+          resolve(resp.access_token);
+        } else { reject(new Error((resp && resp.error) || 'token_error')); }
+      },
+      function(err) { if (!done) { done = true; reject(new Error((err && err.type) || 'token_error')); } }
+    );
+    try { client.requestAccessToken({ prompt: silent ? 'none' : 'consent' }); }
+    catch(e) { if (!done) { done = true; reject(e); } }
+    if (silent) setTimeout(function(){ if (!done) { done = true; reject(new Error('timeout')); } }, 8000);
+  });
+}
+
+// Make sure we have a valid token before any backend/Google call; renew silently if needed.
+async function ensureValidToken() {
+  if (ACCESS_TOKEN && Date.now() < TOKEN_EXPIRY - 60000) return ACCESS_TOKEN;
+  try { return await acquireToken(true); }
+  catch (e) { handleSessionExpired(); throw new Error('Session expired — please sign in again.'); }
+}
+function handleSessionExpired() {
+  clearSession(); ACCESS_TOKEN = null; CURRENT_USER = null;
+  if (IDLE_TIMER) clearTimeout(IDLE_TIMER);
+  var app = document.getElementById('app-screen'); if (app) app.style.display = 'none';
+  var ap = document.getElementById('access-pending-screen'); if (ap) ap.style.display = 'none';
+  var ls = document.getElementById('login-screen'); if (ls) ls.style.display = '';
+}
+
+// ── Inactivity tracking ──
+function startActivityTracking() {
+  ['mousemove','mousedown','keydown','scroll','touchstart','click'].forEach(function(ev) {
+    document.addEventListener(ev, markActivity, { passive: true });
+  });
+  resetIdleTimer();
+}
+function markActivity() {
+  if (!ACCESS_TOKEN) return;
+  resetIdleTimer();
+  var now = Date.now();
+  if (now - _lastActWrite > 30000) { _lastActWrite = now; saveSession(); }  // persist at most every 30s
+}
+function resetIdleTimer() {
+  if (IDLE_TIMER) clearTimeout(IDLE_TIMER);
+  IDLE_TIMER = setTimeout(onIdleTimeout, CONFIG.SESSION_IDLE_MINUTES * 60 * 1000);
+}
+function onIdleTimeout() {
+  toast('Signed out due to inactivity.', 'warn');
+  signOut();
+}
+
+// Restore a saved session on page load (called once the Google library is ready).
+async function tryRestoreSession() {
+  var s = loadSession();
+  if (!s || !s.token) return false;
+  if (Date.now() - (s.lastActivity || 0) > CONFIG.SESSION_IDLE_MINUTES * 60 * 1000) { clearSession(); return false; }
+  ACCESS_TOKEN = s.token; TOKEN_EXPIRY = s.expiry || 0;
+  try {
+    if (Date.now() >= TOKEN_EXPIRY - 60000) await acquireToken(true);  // token aged out — renew silently
+    var prof = await gFetch('https://www.googleapis.com/oauth2/v2/userinfo');
+    CURRENT_PROFILE = prof;
+    if (!prof.email.endsWith('@savardgroup.net')) { clearSession(); ACCESS_TOKEN = null; return false; }
+    var ok = await loadAllData();
+    if (ok && CURRENT_USER) { saveSession(); startActivityTracking(); showApp(); return true; }
+    return false;
+  } catch (e) { clearSession(); ACCESS_TOKEN = null; return false; }
+}
+
+// On load, wait briefly for the Google library, then try to restore the session.
+function bootAuth() {
+  var tries = 0;
+  (function wait() {
+    if (window.google && google.accounts && google.accounts.oauth2) { tryRestoreSession(); return; }
+    if (tries++ > 80) return;  // ~8s; fall back to the (already-visible) login screen
+    setTimeout(wait, 100);
+  })();
+}
+window.addEventListener('load', bootAuth);
 
 function signIn() {
   const btn = document.getElementById('google-signin-btn');
   btn.innerHTML = '<span class="spin"></span> Signing in...';
   btn.disabled = true;
-
-  const client = google.accounts.oauth2.initTokenClient({
-    client_id: CONFIG.CLIENT_ID,
-    scope: CONFIG.SCOPES,
-    callback: async (resp) => {
-      if (resp.error) {
-        showLoginError('Sign-in failed: ' + resp.error);
-        btn.innerHTML = '<svg>...</svg> Sign in with Google';
-        btn.disabled = false;
-        return;
-      }
-      ACCESS_TOKEN = resp.access_token;
-      TOKEN_EXPIRY = Date.now() + (resp.expires_in * 1000);
-      await loadUserProfile();
-    },
-  });
-  client.requestAccessToken({ prompt: 'consent' });
+  acquireToken(false)
+    .then(function(){ return loadUserProfile(); })
+    .catch(function(e){
+      showLoginError('Sign-in failed: ' + (e.message || e));
+      btn.disabled = false;
+    });
 }
 
 async function loadUserProfile() {
@@ -399,7 +500,7 @@ async function loadUserProfile() {
 
     // Load everything (and the caller's role) from the backend in one call.
     const ok = await loadAllData();
-    if (ok && CURRENT_USER) showApp();
+    if (ok && CURRENT_USER) { saveSession(); startActivityTracking(); showApp(); }
   } catch (e) {
     showLoginError('Failed to load profile: ' + e.message);
   }
@@ -442,10 +543,12 @@ function showApp() {
 }
 
 function signOut() {
-  if (ACCESS_TOKEN) google.accounts.oauth2.revoke(ACCESS_TOKEN, () => {});
+  if (ACCESS_TOKEN && window.google && google.accounts) google.accounts.oauth2.revoke(ACCESS_TOKEN, () => {});
   ACCESS_TOKEN = null;
   CURRENT_USER = null;
   CURRENT_PROFILE = null;
+  clearSession();
+  if (IDLE_TIMER) clearTimeout(IDLE_TIMER);
   document.getElementById('app-screen').style.display = 'none';
   document.getElementById('access-pending-screen').style.display = 'none';
   document.getElementById('login-screen').style.display = '';
@@ -464,6 +567,7 @@ function showLoginError(msg) {
 //  BACKEND API + IDENTITY
 // ═══════════════════════════════════════════════════════════
 async function gFetch(url, opts={}) {
+  await ensureValidToken();
   const res = await fetch(url, {
     ...opts,
     headers: { Authorization: 'Bearer ' + ACCESS_TOKEN, 'Content-Type': 'application/json', ...(opts.headers||{}) }
@@ -480,6 +584,7 @@ async function gFetch(url, opts={}) {
 // enforces role access, and reads/writes the Sheet + Drive on our behalf.
 async function api(action, payload) {
   if (!CONFIG.API_URL) throw new Error('API_URL is not set — configure the Cloud Function URL in CONFIG.');
+  await ensureValidToken();
   const res = await fetch(CONFIG.API_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + ACCESS_TOKEN },
@@ -2457,4 +2562,31 @@ async function saveAssignApprover() {
 // ═══════════════════════════════════════════════════════════
 //  LOADING & TOAST
 // ═══════════════════════════════════════════════════════════
-function showL
+function showLoading(msg) {
+  let ov = document.getElementById('loading-ov');
+  if (!ov) {
+    ov = document.createElement('div');
+    ov.id = 'loading-ov';
+    ov.className = 'loading-ov';
+    document.body.appendChild(ov);
+  }
+  ov.innerHTML = `<div class="spin-lg"></div><div class="ls">${msg||'Loading...'}</div>`;
+  ov.style.display = 'flex';
+}
+
+function hideLoading() {
+  const ov = document.getElementById('loading-ov');
+  if (ov) ov.style.display = 'none';
+}
+
+function toast(msg, type='ok') {
+  const icons = {ok:'ti-circle-check',err:'ti-circle-x',warn:'ti-alert-triangle'};
+  const t = document.createElement('div');
+  t.className = `toast ${type}`;
+  t.innerHTML = `<i class="ti ${icons[type]||'ti-info-circle'}" style="font-size:18px"></i>${msg}`;
+  document.getElementById('toast-container').appendChild(t);
+  setTimeout(() => t.remove(), 4500);
+}
+</script>
+</body>
+</html>
