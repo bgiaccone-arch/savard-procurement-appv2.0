@@ -25,7 +25,7 @@
     ].join(" "),
     LEADERSHIP_THRESHOLD: 400,   // refreshed from the server on load
     SESSION_IDLE_MINUTES: 120,   // auto sign-out after this many minutes of no activity
-    VERSION: "4.8.3",
+    VERSION: "4.8.4",
   };
 </script>
 
@@ -788,15 +788,25 @@ function appendNavItem(nav, key, badge) {
   const item = document.createElement('div');
   item.className = 'ni' + (currentPage===key?' act':'');
   const b = badge && badge>0 ? `<span class="nb">${badge}</span>` : '';
-  item.innerHTML = `<i class="ti ${NAV_ICONS[key]}"></i><span>${PAGES[key].title}</span>${b}`;
+  item.innerHTML = `<i class="ti ${NAV_ICONS[key]}"></i><span>${pageTitle(key)}</span>${b}`;
   item.onclick = () => navigate(key);
   nav.appendChild(item);
 }
 
+// Page label can vary by role: Branch Approvers see branch-scoped wording.
+function pageTitle(key) {
+  if (key === 'all-requests' && CURRENT_USER && CURRENT_USER.role === 'Branch Approver') return 'Branch/Dept Requests';
+  return (PAGES[key] && PAGES[key].title) || key;
+}
+function pageSub(key) {
+  if (key === 'all-requests' && CURRENT_USER && CURRENT_USER.role === 'Branch Approver') return 'Requests for your branches/departments';
+  return (PAGES[key] && PAGES[key].sub) || '';
+}
+
 async function navigate(page) {
   currentPage = page;
-  document.getElementById('page-title').textContent = PAGES[page]?.title || page;
-  document.getElementById('page-sub').textContent = PAGES[page]?.sub || '';
+  document.getElementById('page-title').textContent = pageTitle(page);
+  document.getElementById('page-sub').textContent = pageSub(page);
   renderNav();
   showLoading('Loading...');
   await loadAllData();
@@ -810,7 +820,7 @@ function renderPage() {
     case 'dashboard': c.innerHTML = renderDashboard(); break;
     case 'my-requests': c.innerHTML = renderRequestTable(getMyRequests(), 'My Requests'); break;
     case 'pending-approvals': c.innerHTML = renderPendingApprovals(); break;
-    case 'all-requests': c.innerHTML = renderRequestTable(_requests, 'All Requests'); break;
+    case 'all-requests': c.innerHTML = renderRequestTable(_requests, pageTitle('all-requests')); break;
     case 'queue': c.innerHTML = renderQueue(); break;
     case 'leadership-approvals': c.innerHTML = renderLeadershipApprovals(); break;
     case 'approval-rules': c.innerHTML = renderApprovalRules(); break;
