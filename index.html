@@ -25,7 +25,7 @@
     ].join(" "),
     LEADERSHIP_THRESHOLD: 400,   // refreshed from the server on load
     SESSION_IDLE_MINUTES: 120,   // auto sign-out after this many minutes of no activity
-    VERSION: "4.6.3",
+    VERSION: "4.6.4",
   };
 </script>
 
@@ -333,7 +333,7 @@ tr:hover td{background:#fafbfc}
             <i class="ti ti-plus"></i> New Request
           </button>
           <button class="btn btn-outline btn-sm" onclick="signOut()">
-            <i class="ti ti-logout"></i>
+            <i class="ti ti-logout"></i> Log out
           </button>
         </div>
       </header>
@@ -737,12 +737,12 @@ const NAV_ICONS = {
   reports:'ti-chart-bar','spend-threshold':'ti-adjustments-dollar','audit-log':'ti-history','admin-panel':'ti-shield-lock',
 };
 const ROLE_NAV = {
-  Requestor:         [null,['dashboard','my-requests','new-request']],
+  Requestor:         [null,['dashboard','my-requests']],
   'Branch Approver': [null,['dashboard'],['Approvals',['pending-approvals']],['Requests',['my-requests']],['Reports',['reports']]],
-  'Procurement Admin':[null,['dashboard'],['Booking',['queue']],['Requests',['new-request','all-requests']],['Admin',['spend-threshold','audit-log']]],
+  'Procurement Admin':[null,['dashboard'],['Booking',['queue']],['Requests',['all-requests']],['Admin',['spend-threshold','audit-log']]],
   Leadership:        [null,['dashboard'],['Approvals',['leadership-approvals']],['Requests',['all-requests']],['Admin',['spend-threshold','audit-log']]],
   Finance:           [null,['dashboard'],['Data',['all-requests']],['Admin',['spend-threshold','audit-log']]],
-  'Super Admin':     [null,['dashboard'],['Approvals',['pending-approvals']],['Operations',['new-request','all-requests']],['Administration',['approval-rules','reports','spend-threshold','audit-log','admin-panel']]],
+  'Super Admin':     [null,['dashboard'],['Approvals',['pending-approvals']],['Operations',['all-requests']],['Administration',['approval-rules','reports','spend-threshold','audit-log','admin-panel']]],
 };
 
 function renderNav() {
@@ -873,7 +873,7 @@ function renderDashboard() {
   const total = _requests.length;
   const pending = _requests.filter(r=>r.status==='Pending Approval'||r.status==='Open').length;
   const completed = _requests.filter(r=>r.status==='Completed').length;
-  const spend = _requests.filter(r=>r.status!=='Rejected').reduce((s,r)=>s+(parseFloat(r.totalAmount)||0),0);
+  const spend = _requests.filter(r=>r.status==='Completed').reduce((s,r)=>s+(parseFloat(r.totalAmount)||0),0);
 
   const sorted = [..._requests].sort((a,b) => {
     const da = new Date(a.submittedAt||0), db = new Date(b.submittedAt||0);
@@ -1136,21 +1136,21 @@ function renderReports() {
   const { scoped, myBranches, reqs, items } = getReportScope();
 
   const byBranch = {};
-  const rejectedIds = new Set(reqs.filter(r=>r.status==='Rejected').map(r=>r.id));
+  const completedIds = new Set(reqs.filter(r=>r.status==='Completed').map(r=>r.id));
   reqs.forEach(r => {
-    if (r.status === 'Rejected') return;  // rejected requests are not spend
+    if (r.status !== 'Completed') return;  // only completed requests count as spend
     byBranch[r.branch] = (byBranch[r.branch]||0) + (parseFloat(r.totalAmount)||0);
   });
   // Make sure every covered branch shows up, even with $0 spend.
   if (scoped) myBranches.forEach(b => { if (byBranch[b]===undefined) byBranch[b]=0; });
   const sorted = Object.entries(byBranch).sort((a,b)=>b[1]-a[1]);
   const max = sorted[0]?.[1]||1;
-  const totalSpend = reqs.filter(r=>r.status!=='Rejected').reduce((s,r)=>s+(parseFloat(r.totalAmount)||0),0);
+  const totalSpend = reqs.filter(r=>r.status==='Completed').reduce((s,r)=>s+(parseFloat(r.totalAmount)||0),0);
 
   // Spend by item type, split into Travel vs Item Request groups.
   const travelTypes = ['Flight','Hotel','Car Rental','Bus'];
   const byType = {};
-  items.forEach(i=>{ if (rejectedIds.has(i.requestID)) return; byType[i.itemType] = (byType[i.itemType]||0) + (parseFloat(i.estimatedAmount)||0); });
+  items.forEach(i=>{ if (!completedIds.has(i.requestID)) return; byType[i.itemType] = (byType[i.itemType]||0) + (parseFloat(i.estimatedAmount)||0); });
   const travelSpend = travelTypes.reduce((s,t)=>s+(byType[t]||0),0);
   const itemSpend = Object.entries(byType).filter(([t])=>!travelTypes.includes(t)).reduce((s,[,v])=>s+v,0);
   const quoteCount = reqs.filter(r=>isQuote(r)).length;
@@ -1261,23 +1261,23 @@ function exportReportsToExcel() {
       };
     });
 
-    // Sheet 2 — Spend by Branch (rejected requests excluded from spend)
-    const rejectedIds = new Set(reqs.filter(r=>r.status==='Rejected').map(r=>r.id));
+    // Sheet 2 — Spend by Branch (only completed requests count as spend)
+    const completedIds = new Set(reqs.filter(r=>r.status==='Completed').map(r=>r.id));
     const byBranch = {};
-    reqs.forEach(r => { if (r.status==='Rejected') return; byBranch[r.branch] = (byBranch[r.branch]||0) + n(r.totalAmount); });
+    reqs.forEach(r => { if (r.status!=='Completed') return; byBranch[r.branch] = (byBranch[r.branch]||0) + n(r.totalAmount); });
     if (scoped) myBranches.forEach(b => { if (byBranch[b]===undefined) byBranch[b]=0; });
     const branchRows = Object.entries(byBranch).sort((a,b)=>b[1]-a[1])
       .map(([b,v]) => ({ 'Branch / Dept': b||'Unknown', 'Total Spend': v }));
 
-    // Sheet 3 — Spend by Type (rejected requests excluded)
+    // Sheet 3 — Spend by Type (only completed requests)
     const byType = {};
-    items.forEach(i => { if (rejectedIds.has(i.requestID)) return; byType[i.itemType] = (byType[i.itemType]||0) + n(i.estimatedAmount); });
+    items.forEach(i => { if (!completedIds.has(i.requestID)) return; byType[i.itemType] = (byType[i.itemType]||0) + n(i.estimatedAmount); });
     const typeRows = Object.entries(byType).sort((a,b)=>b[1]-a[1])
       .map(([t,v]) => ({ 'Type': t, 'Total Spend': v }));
 
     // Sheet 4 — Summary
     const travelTypes = ['Flight','Hotel','Car Rental','Bus'];
-    const totalSpend = reqs.filter(r=>r.status!=='Rejected').reduce((s,r)=>s+n(r.totalAmount),0);
+    const totalSpend = reqs.filter(r=>r.status==='Completed').reduce((s,r)=>s+n(r.totalAmount),0);
     const travelSpend = travelTypes.reduce((s,t)=>s+(byType[t]||0),0);
     const itemSpend = Object.entries(byType).filter(([t])=>!travelTypes.includes(t)).reduce((s,[,v])=>s+v,0);
     const summaryRows = [
