@@ -25,7 +25,7 @@
     ].join(" "),
     LEADERSHIP_THRESHOLD: 400,   // refreshed from the server on load
     SESSION_IDLE_MINUTES: 120,   // auto sign-out after this many minutes of no activity
-    VERSION: "4.8.4",
+    VERSION: "4.8.5",
   };
 </script>
 
@@ -820,7 +820,7 @@ function renderPage() {
     case 'dashboard': c.innerHTML = renderDashboard(); break;
     case 'my-requests': c.innerHTML = renderRequestTable(getMyRequests(), 'My Requests'); break;
     case 'pending-approvals': c.innerHTML = renderPendingApprovals(); break;
-    case 'all-requests': c.innerHTML = renderRequestTable(_requests, pageTitle('all-requests')); break;
+    case 'all-requests': c.innerHTML = renderRequestTable(_requests, pageTitle('all-requests'), true); break;
     case 'queue': c.innerHTML = renderQueue(); break;
     case 'leadership-approvals': c.innerHTML = renderLeadershipApprovals(); break;
     case 'approval-rules': c.innerHTML = renderApprovalRules(); break;
@@ -856,14 +856,16 @@ function fmtDate(d) {
   return isNaN(dt)?d:dt.toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'});
 }
 
-function renderRequestTable(reqs, title) {
+function renderRequestTable(reqs, title, showBranchFilter) {
   if (!reqs.length) return `<div class="empty"><i class="ti ti-files"></i><p>No requests found.</p></div>`;
   const rows = reqs.map(r => {
     const items = getRequestItems(r.id);
     const typeChips = items.map(i=>`<span class="tc"><i class="ti ${typeIcon(i.itemType)}" aria-hidden="true"></i>${i.itemType}</span>`).join(' ');
     const total = parseFloat(r.totalAmount)||0;
     const over = total >= CONFIG.LEADERSHIP_THRESHOLD;
-    return `<tr class="cr" onclick="openRequestDetail('${r.id}')">
+    const branchAttr = (r.branch||'').split('"').join('&quot;');
+    const statusAttr = (r.status||'').split('"').join('&quot;');
+    return `<tr class="cr" data-branch="${branchAttr}" data-status="${statusAttr}" onclick="openRequestDetail('${r.id}')">
       <td><span style="font-weight:600;color:var(--navy)">${r.id}</span>${isQuote(r)?` <span class="bdg b-info" style="font-size:9px;padding:1px 6px">QUOTE</span>`:''}</td>
       <td>${r.submitterName}</td>
       <td><span class="bdg b-navy">${r.branch||'—'}</span></td>
@@ -873,15 +875,34 @@ function renderRequestTable(reqs, title) {
       <td style="font-size:12px;color:var(--muted)">${fmtDate(r.submittedAt)}</td>
     </tr>`;
   }).join('');
+
+  const branchList = showBranchFilter ? [...new Set(reqs.map(r=>r.branch).filter(Boolean))].sort() : [];
+  const branchFilter = branchList.length ? `
+      <div class="bf-wrap" style="position:relative">
+        <button type="button" id="bf-btn" class="fs" style="cursor:pointer;text-align:left;display:flex;align-items:center;gap:6px;min-width:150px" onclick="toggleBranchFilter(event)">
+          <i class="ti ti-building-community" style="font-size:14px;color:var(--muted)"></i>
+          <span id="bf-label">All Branches</span>
+          <i class="ti ti-chevron-down" style="font-size:13px;margin-left:auto;color:var(--muted)"></i>
+        </button>
+        <div id="bf-panel" style="display:none;position:absolute;z-index:60;top:calc(100% + 4px);right:0;background:#fff;border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.14);padding:8px;min-width:210px;max-height:300px;overflow:auto">
+          <div style="display:flex;justify-content:space-between;align-items:center;padding:2px 6px 6px;border-bottom:1px solid var(--border);margin-bottom:6px">
+            <span style="font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.04em">Filter by branch</span>
+            <button type="button" onclick="branchFilterClear()" style="background:none;border:none;color:var(--navy);font-size:12px;cursor:pointer;font-weight:600">Clear</button>
+          </div>
+          ${branchList.map(b=>`<label style="display:flex;align-items:center;gap:8px;padding:5px 6px;font-size:13px;cursor:pointer;border-radius:4px"><input type="checkbox" class="bf-cb" value="${b.split('"').join('&quot;')}" onchange="applyFilters()"> ${b}</label>`).join('')}
+        </div>
+      </div>` : '';
+
   return `<div class="tw">
     <div class="th-row">
       <span class="tt">${title}</span>
-      <div class="sb-box"><i class="ti ti-search" style="color:var(--muted);font-size:15px"></i><input placeholder="Search..." oninput="filterTable(this)"/></div>
-      <select class="fs" onchange="filterTable(this)">
+      <div class="sb-box"><i class="ti ti-search" style="color:var(--muted);font-size:15px"></i><input id="rt-search" placeholder="Search..." oninput="applyFilters()"/></div>
+      <select id="rt-status" class="fs" onchange="applyFilters()">
         <option>All Statuses</option>
         <option>Open</option><option>Pending Approval</option><option>Leadership Approval</option>
         <option>Ready to Book</option><option>Completed</option><option>Rejected</option>
       </select>
+      ${branchFilter}
     </div>
     <table id="req-table">
       <thead><tr><th>ID</th><th>Submitted By</th><th>Branch</th><th>Types</th><th>Total</th><th>Status</th><th>Date</th></tr></thead>
@@ -2416,20 +2437,46 @@ async function saveEditUser(email) {
   hideLoading();
 }
 
-function filterTable(el) {
-  // Simple client-side filter
+function applyFilters() {
   const table = document.getElementById('req-table');
   if (!table) return;
-  const rows = table.querySelectorAll('tbody tr');
-  const term = (typeof el.value === 'string' && el.tagName==='INPUT') ? el.value.toLowerCase() : '';
-  const status = (el.tagName==='SELECT') ? el.value : '';
-  rows.forEach(r => {
+  const termEl = document.getElementById('rt-search');
+  const statusEl = document.getElementById('rt-status');
+  const term = termEl ? termEl.value.toLowerCase() : '';
+  const status = statusEl ? statusEl.value : '';
+  const checked = [];
+  document.querySelectorAll('.bf-cb').forEach(c => { if (c.checked) checked.push(c.value); });
+  const useBranch = checked.length > 0;
+  table.querySelectorAll('tbody tr').forEach(r => {
     const text = r.textContent.toLowerCase();
     const matchTerm = !term || text.includes(term);
-    const matchStatus = !status || status==='All Statuses' || text.includes(status.toLowerCase());
-    r.style.display = (matchTerm && matchStatus) ? '' : 'none';
+    const matchStatus = !status || status === 'All Statuses' || (r.getAttribute('data-status') || '') === status;
+    const matchBranch = !useBranch || checked.indexOf(r.getAttribute('data-branch') || '') !== -1;
+    r.style.display = (matchTerm && matchStatus && matchBranch) ? '' : 'none';
   });
+  const lbl = document.getElementById('bf-label');
+  if (lbl) lbl.textContent = useBranch ? (checked.length + (checked.length === 1 ? ' branch' : ' branches')) : 'All Branches';
 }
+
+function toggleBranchFilter(e) {
+  if (e) e.stopPropagation();
+  const p = document.getElementById('bf-panel');
+  if (!p) return;
+  p.style.display = (!p.style.display || p.style.display === 'none') ? 'block' : 'none';
+}
+
+function branchFilterClear() {
+  document.querySelectorAll('.bf-cb').forEach(c => { c.checked = false; });
+  applyFilters();
+}
+
+// Close the branch filter panel when clicking outside of it (bound once).
+document.addEventListener('click', function(e) {
+  const p = document.getElementById('bf-panel');
+  if (!p || p.style.display === 'none') return;
+  if (e.target.closest && e.target.closest('.bf-wrap')) return;
+  p.style.display = 'none';
+});
 
 function approverOptions(selectedEmail) {
   // Anyone who can act as an approver: Branch Approver, Super Admin, Leadership.
