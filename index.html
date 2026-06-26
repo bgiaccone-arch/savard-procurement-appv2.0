@@ -25,7 +25,7 @@
     ].join(" "),
     LEADERSHIP_THRESHOLD: 400,   // refreshed from the server on load
     SESSION_IDLE_MINUTES: 120,   // auto sign-out after this many minutes of no activity
-    VERSION: "4.7.2",
+    VERSION: "4.8.3",
   };
 </script>
 
@@ -749,7 +749,7 @@ const NAV_ICONS = {
 };
 const ROLE_NAV = {
   Requestor:         [null,['dashboard','my-requests']],
-  'Branch Approver': [null,['dashboard'],['Approvals',['pending-approvals']],['Requests',['my-requests']],['Reports',['reports']]],
+  'Branch Approver': [null,['dashboard'],['Approvals',['pending-approvals']],['Requests',['my-requests','all-requests']],['Reports',['reports']]],
   'Procurement Admin':[null,['dashboard'],['Booking',['queue']],['Requests',['all-requests']],['Admin',['spend-threshold','audit-log']]],
   Leadership:        [null,['dashboard'],['Approvals',['leadership-approvals']],['Requests',['all-requests']],['Admin',['spend-threshold','audit-log']]],
   Finance:           [null,['dashboard'],['Data',['all-requests']],['Admin',['spend-threshold','audit-log']]],
