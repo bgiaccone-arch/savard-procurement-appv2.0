@@ -25,7 +25,7 @@
     ].join(" "),
     LEADERSHIP_THRESHOLD: 400,   // refreshed from the server on load
     SESSION_IDLE_MINUTES: 120,   // auto sign-out after this many minutes of no activity
-    VERSION: "4.7.1",
+    VERSION: "4.7.2",
   };
 </script>
 
@@ -402,7 +402,7 @@ function acquireToken(silent) {
       },
       function(err) { if (!done) { done = true; reject(new Error((err && err.type) || 'token_error')); } }
     );
-    try { client.requestAccessToken({ prompt: silent ? 'none' : 'consent' }); }
+    try { client.requestAccessToken({ prompt: silent ? 'none' : 'select_account' }); }
     catch(e) { if (!done) { done = true; reject(e); } }
     if (silent) setTimeout(function(){ if (!done) { done = true; reject(new Error('timeout')); } }, 8000);
   });
@@ -502,9 +502,7 @@ async function loadUserProfile() {
     // Check domain
     if (!res.email.endsWith('@savardgroup.net')) {
       showLoginError('Access restricted to @savardgroup.net accounts. Signed in as: ' + res.email);
-      ACCESS_TOKEN = null;
-      document.getElementById('google-signin-btn').disabled = false;
-      document.getElementById('google-signin-btn').innerHTML = '<svg width="18"...>...</svg> Sign in with Google';
+      ACCESS_TOKEN = null; clearSession();
       return;
     }
 
@@ -516,38 +514,43 @@ async function loadUserProfile() {
   }
 }
 
+function setText(id, val) { const el = document.getElementById(id); if (el) el.textContent = (val == null ? '' : val); }
+
 function showAccessPending() {
   document.getElementById('login-screen').style.display = 'none';
   document.getElementById('app-screen').style.display = 'none';
   document.getElementById('access-pending-screen').style.display = '';
-  document.getElementById('ap-name').textContent = CURRENT_PROFILE.name;
-  document.getElementById('ap-email').textContent = CURRENT_PROFILE.email;
-  document.getElementById('ap-email2').textContent = CURRENT_PROFILE.email;
-  if (CURRENT_PROFILE.picture) {
-    document.getElementById('ap-avatar').innerHTML = `<img src="${CURRENT_PROFILE.picture}" style="width:100%;height:100%;border-radius:50%;object-fit:cover">`;
-  } else {
-    document.getElementById('ap-avatar').textContent = (CURRENT_PROFILE.name||'?').split(' ').map(n=>n[0]).join('').slice(0,2).toUpperCase();
+  const p = CURRENT_PROFILE || {};
+  setText('ap-name', p.name);
+  setText('ap-email', p.email);
+  setText('ap-email2', p.email);
+  const av = document.getElementById('ap-avatar');
+  if (av) {
+    if (p.picture) av.innerHTML = `<img src="${p.picture}" style="width:100%;height:100%;border-radius:50%;object-fit:cover">`;
+    else av.textContent = (p.name||'?').split(' ').map(n=>n[0]).join('').slice(0,2).toUpperCase();
   }
 }
 
 async function loadSettings() { /* settings now arrive via bootstrap */ }
 
 function showApp() {
+  if (!CURRENT_USER) return;
   document.getElementById('login-screen').style.display = 'none';
+  const ap = document.getElementById('access-pending-screen'); if (ap) ap.style.display = 'none';
   document.getElementById('app-screen').style.display = '';
   const initials = (CURRENT_USER.name||'??').split(' ').map(n=>n[0]).join('').slice(0,2).toUpperCase();
-  document.getElementById('user-initials').textContent = initials;
-  document.getElementById('user-name').textContent = CURRENT_USER.name;
-  document.getElementById('user-role').textContent = CURRENT_USER.role;
+  setText('user-initials', initials);
+  setText('user-name', CURRENT_USER.name);
+  setText('user-role', CURRENT_USER.role);
   if (CURRENT_PROFILE && CURRENT_PROFILE.picture) {
     const av = document.getElementById('user-av');
-    av.innerHTML = `<img src="${CURRENT_PROFILE.picture}" alt="avatar">`;
+    if (av) av.innerHTML = `<img src="${CURRENT_PROFILE.picture}" alt="avatar">`;
   }
   if (['Requestor','Branch Approver','Procurement Admin'].includes(CURRENT_USER.role)) {
-    document.getElementById('page-sub').textContent = CURRENT_USER.primaryBranch;
+    setText('page-sub', CURRENT_USER.primaryBranch);
   }
   const showNewBtn = ['Requestor','Procurement Admin','Super Admin'].includes(CURRENT_USER.role);
-  document.getElementById('new-req-btn').style.display = showNewBtn ? '' : 'none';
+  const nb = document.getElementById('new-req-btn'); if (nb) nb.style.display = showNewBtn ? '' : 'none';
   renderNav();
   navigate('dashboard');
 }
@@ -567,11 +570,8 @@ function signOut() {
 
 function showLoginError(msg) {
   const el = document.getElementById('login-error');
-  el.textContent = msg;
-  el.style.display = '';
-  const btn = document.getElementById('google-signin-btn');
-  btn.innerHTML = 'Try again';
-  btn.disabled = false;
+  if (el) { el.textContent = msg; el.style.display = ''; }
+  resetSignInButton();
 }
 
 // ═══════════════════════════════════════════════════════════
