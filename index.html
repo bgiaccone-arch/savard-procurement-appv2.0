@@ -25,7 +25,7 @@
     ].join(" "),
     LEADERSHIP_THRESHOLD: 400,   // refreshed from the server on load
     SESSION_IDLE_MINUTES: 120,   // auto sign-out after this many minutes of no activity
-    VERSION: "4.6.4",
+    VERSION: "4.7.1",
   };
 </script>
 
@@ -420,6 +420,7 @@ function handleSessionExpired() {
   var app = document.getElementById('app-screen'); if (app) app.style.display = 'none';
   var ap = document.getElementById('access-pending-screen'); if (ap) ap.style.display = 'none';
   var ls = document.getElementById('login-screen'); if (ls) ls.style.display = '';
+  resetSignInButton();
 }
 
 // ── Inactivity tracking ──
@@ -462,7 +463,15 @@ async function tryRestoreSession() {
 }
 
 // On load, wait briefly for the Google library, then try to restore the session.
+let _signInBtnHTML = null;
+function resetSignInButton() {
+  const btn = document.getElementById('google-signin-btn');
+  if (btn && _signInBtnHTML !== null) { btn.innerHTML = _signInBtnHTML; btn.disabled = false; }
+}
+
 function bootAuth() {
+  const sb = document.getElementById('google-signin-btn');
+  if (sb && _signInBtnHTML === null) _signInBtnHTML = sb.innerHTML;  // remember default label
   var tries = 0;
   (function wait() {
     if (window.google && google.accounts && google.accounts.oauth2) { tryRestoreSession(); return; }
@@ -474,13 +483,14 @@ window.addEventListener('load', bootAuth);
 
 function signIn() {
   const btn = document.getElementById('google-signin-btn');
+  if (_signInBtnHTML === null) _signInBtnHTML = btn.innerHTML;
   btn.innerHTML = '<span class="spin"></span> Signing in...';
   btn.disabled = true;
   acquireToken(false)
     .then(function(){ return loadUserProfile(); })
     .catch(function(e){
       showLoginError('Sign-in failed: ' + (e.message || e));
-      btn.disabled = false;
+      resetSignInButton();
     });
 }
 
@@ -552,6 +562,7 @@ function signOut() {
   document.getElementById('app-screen').style.display = 'none';
   document.getElementById('access-pending-screen').style.display = 'none';
   document.getElementById('login-screen').style.display = '';
+  resetSignInButton();
 }
 
 function showLoginError(msg) {
@@ -1396,8 +1407,13 @@ function buildQuickBooksIIF() {
 // ═══════════════════════════════════════════════════════════
 async function submitRequest(formData) {
   const kind = formData.requestKind || 'Purchase Request';
-  const res = await api('submitRequest', formData);   // backend writes rows + notifies approver
-  toast(`${kind === 'Quote Request' ? 'Quote request' : 'Request'} ${res.id} submitted! Your approver has been notified.`, 'ok');
+  const label = kind === 'Quote Request' ? 'Quote request' : 'Request';
+  const res = await api('submitRequest', formData);   // backend writes rows + routes by submitter role
+  let msg;
+  if (res.status === 'Ready to Book') msg = `${label} ${res.id} submitted and auto-approved - it's ready to book.`;
+  else if (res.status === 'Leadership Approval') msg = `${label} ${res.id} submitted - over threshold, sent for leadership approval.`;
+  else msg = `${label} ${res.id} submitted! Your approver has been notified.`;
+  toast(msg, 'ok');
   closePanel();
   await navigate('my-requests');
 }
@@ -1476,6 +1492,12 @@ function openRequestDetail(reqID) {
   const items = getRequestItems(reqID);
   const approvals = getRequestApprovals(reqID);
   const reqComments = _comments.filter(c=>c.requestID===reqID).sort((a,b)=>new Date(a.createdAt||0)-new Date(b.createdAt||0));
+  // Viewing the request acknowledges its urgent comments — clear them from the bell.
+  try {
+    const myEmail = (CURRENT_USER.email||'').toLowerCase();
+    const seenIds = reqComments.filter(c => c.id && c.urgent==='TRUE' && (c.authorEmail||'').toLowerCase()!==myEmail).map(c=>c.id);
+    if (seenIds.length) { markUrgentSeen(seenIds); updateBell(); }
+  } catch(e) {}
   const total = parseFloat(req.totalAmount)||0;
   const over = total >= CONFIG.LEADERSHIP_THRESHOLD;
 
@@ -2059,7 +2081,7 @@ function getMyUrgentComments() {
   const myEmail = (CURRENT_USER.email||'').toLowerCase();
   const reqById = {}; _requests.forEach(r => reqById[r.id] = r);
   return _comments
-    .filter(c => c.urgent === 'TRUE' && (c.authorEmail||'').toLowerCase() !== myEmail && reqById[c.requestID])
+    .filter(c => c.id && c.urgent === 'TRUE' && (c.authorEmail||'').toLowerCase() !== myEmail && reqById[c.requestID])
     .sort((a,b) => new Date(b.createdAt||0) - new Date(a.createdAt||0));
 }
 function seenUrgentSet() {
@@ -2081,7 +2103,7 @@ function updateBell() {
   const urgent = getMyUrgentComments();
   const seen = seenUrgentSet();
   const unseenUrgent = urgent.filter(c => !seen.has(c.id));
-  const hasAny = pending.length || leadership.length || urgent.length;
+  const hasAny = pending.length || leadership.length || unseenUrgent.length;
   dot.style.display = hasAny ? 'block' : 'none';
   if (unseenUrgent.length) { dot.classList.add('urgent'); if (btn) btn.classList.add('bell-urgent'); }
   else { dot.classList.remove('urgent'); if (btn) btn.classList.remove('bell-urgent'); }
