@@ -25,7 +25,7 @@
     ].join(" "),
     LEADERSHIP_THRESHOLD: 400,   // refreshed from the server on load
     SESSION_IDLE_MINUTES: 120,   // auto sign-out after this many minutes of no activity
-    VERSION: "4.8.5",
+    VERSION: "4.9.0",
   };
 </script>
 
@@ -836,7 +836,7 @@ function renderPage() {
 //  RENDER HELPERS
 // ═══════════════════════════════════════════════════════════
 function statusBadge(s) {
-  const m = {'Open':'b-gray','Pending Approval':'b-warn','Leadership Approval':'b-pur','Ready to Book':'b-info','Completed':'b-ok','Rejected':'b-err'};
+  const m = {'Open':'b-gray','Pending Approval':'b-warn','Leadership Approval':'b-pur','Ready to Book':'b-info','Completed':'b-ok','Rejected':'b-err','Cancelled':'b-gray'};
   return `<span class="bdg ${m[s]||'b-gray'}">${s}</span>`;
 }
 function typeIcon(t) {
@@ -900,9 +900,10 @@ function renderRequestTable(reqs, title, showBranchFilter) {
       <select id="rt-status" class="fs" onchange="applyFilters()">
         <option>All Statuses</option>
         <option>Open</option><option>Pending Approval</option><option>Leadership Approval</option>
-        <option>Ready to Book</option><option>Completed</option><option>Rejected</option>
+        <option>Ready to Book</option><option>Completed</option><option>Rejected</option><option>Cancelled</option>
       </select>
       ${branchFilter}
+      ${(showBranchFilter && CURRENT_USER.role==='Super Admin') ? `<button type="button" class="btn btn-outline btn-sm" title="Remove all Cancelled and Rejected requests from the sheet" style="white-space:nowrap" onclick="purgeClosedRequests()"><i class="ti ti-trash"></i> Clean up closed</button>` : ''}
     </div>
     <table id="req-table">
       <thead><tr><th>ID</th><th>Submitted By</th><th>Branch</th><th>Types</th><th>Total</th><th>Status</th><th>Date</th></tr></thead>
@@ -1253,7 +1254,7 @@ function renderReports() {
     <div>
       <div class="sh"><h3>Request Status Breakdown</h3></div>
       <div class="tw" style="padding:20px;margin-bottom:16px">
-        ${['Open','Pending Approval','Leadership Approval','Ready to Book','Completed','Rejected'].map(s=>{
+        ${['Open','Pending Approval','Leadership Approval','Ready to Book','Completed','Rejected','Cancelled'].map(s=>{
           const count = reqs.filter(r=>r.status===s).length;
           return `<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border);font-size:13px">
             ${statusBadge(s)}<span style="font-weight:700">${count}</span></div>`;
@@ -1478,6 +1479,38 @@ async function markBooked(reqID, confirmationLink, note, paymentMethod) {
   await navigate('queue');
 }
 
+async function cancelOrder(reqID) {
+  const note = prompt('Cancel this order?\n\nOptionally add a reason (the requestor will be notified):', '');
+  if (note === null) return; // user backed out
+  try {
+    await api('cancelRequest', { reqID, note: note.trim() });
+    toast('Order cancelled. Requestor has been notified.', 'warn');
+  } catch (e) { toast('Could not cancel order: ' + e.message, 'err'); return; }
+  closePanel();
+  await navigate(currentPage);
+}
+
+async function deleteOrder(reqID) {
+  if (!confirm('Permanently remove this request from the sheet?\n\nThis deletes the request and all of its items, approvals, and comments. This cannot be undone.')) return;
+  try {
+    const res = await api('deleteRequest', { reqID });
+    toast('Request removed from the sheet.', 'ok');
+  } catch (e) { toast('Could not remove request: ' + e.message, 'err'); return; }
+  closePanel();
+  await navigate(currentPage);
+}
+
+async function purgeClosedRequests() {
+  const closed = _requests.filter(r => r.status === 'Cancelled' || r.status === 'Rejected').length;
+  if (!closed) { toast('No Cancelled or Rejected requests to remove.', 'warn'); return; }
+  if (!confirm(`Permanently remove all Cancelled and Rejected requests from the sheet?\n\nThis will delete ${closed} request${closed===1?'':'s'} (plus their items, approvals, and comments). This cannot be undone.`)) return;
+  try {
+    const res = await api('purgeClosed', {});
+    toast(`Removed ${res.requests} request${res.requests===1?'':'s'} from the sheet.`, 'ok');
+  } catch (e) { toast('Could not remove requests: ' + e.message, 'err'); return; }
+  await navigate(currentPage);
+}
+
 async function saveThreshold() {
   const val = parseFloat(document.getElementById('threshold-input').value) || 400;
   try {
@@ -1535,6 +1568,10 @@ function openRequestDetail(reqID) {
   const canApprove = canApproveRequest(req);
   const canLeadership = CURRENT_USER.role==='Leadership' && req.status==='Leadership Approval';
   const canBook = CURRENT_USER.role==='Procurement Admin' && req.status==='Ready to Book';
+  const canCancel = !['Completed','Cancelled','Rejected'].includes(req.status)
+    && (['Super Admin','Procurement Admin','Leadership'].includes(CURRENT_USER.role)
+        || (req.submitterEmail||'').toLowerCase() === (CURRENT_USER.email||'').toLowerCase());
+  const canDelete = CURRENT_USER.role==='Super Admin' && ['Cancelled','Rejected'].includes(req.status);
 
   const tlSteps = [
     {d:'done',t:'Submitted',m:`${req.submitterName} · ${fmtDate(req.submittedAt)}`},
@@ -1662,23 +1699,27 @@ function openRequestDetail(reqID) {
         </div>
       </div>
 
-      ${canApprove?`
-      <div class="pf">
-        <textarea id="approval-note" placeholder="Add a note (optional)..." style="flex:1;border:1px solid var(--border);border-radius:7px;padding:8px 10px;font-size:13px;resize:none;height:38px;font-family:inherit;outline:none"></textarea>
+      ${(() => {
+        let primary;
+        if (canApprove) {
+          primary = `<textarea id="approval-note" placeholder="Add a note (optional)..." style="flex:1;border:1px solid var(--border);border-radius:7px;padding:8px 10px;font-size:13px;resize:none;height:38px;font-family:inherit;outline:none"></textarea>
         <button class="btn btn-err" onclick="approveRequest('${req.id}','reject')"><i class="ti ti-x"></i> Reject</button>
-        <button class="btn btn-ok" onclick="approveRequest('${req.id}','approve')"><i class="ti ti-check"></i> Approve</button>
-      </div>`:
-      canLeadership?`
-      <div class="pf">
-        <button class="btn btn-err" onclick="leadershipDecision('${req.id}','reject')"><i class="ti ti-x"></i> Reject</button>
-        <button class="btn btn-ok" onclick="leadershipDecision('${req.id}','approve')"><i class="ti ti-check"></i> Approve</button>
-      </div>`:
-      canBook?`
-      <div class="pf">
-        <input id="conf-link" placeholder="Confirmation # or Google Drive link..." style="flex:1;border:1px solid var(--border);border-radius:7px;padding:8px 12px;font-size:13px;outline:none"/>
-        <button class="btn btn-primary" onclick="markBooked('${req.id}',document.getElementById('conf-link').value,'')"><i class="ti ti-check"></i> Mark Booked & Notify</button>
-      </div>`:`
-      <div class="pf"><button class="btn btn-outline" onclick="closePanel()">Close</button></div>`}
+        <button class="btn btn-ok" onclick="approveRequest('${req.id}','approve')"><i class="ti ti-check"></i> Approve</button>`;
+        } else if (canLeadership) {
+          primary = `<button class="btn btn-err" onclick="leadershipDecision('${req.id}','reject')"><i class="ti ti-x"></i> Reject</button>
+        <button class="btn btn-ok" onclick="leadershipDecision('${req.id}','approve')"><i class="ti ti-check"></i> Approve</button>`;
+        } else if (canBook) {
+          primary = `<input id="conf-link" placeholder="Confirmation # or Google Drive link..." style="flex:1;border:1px solid var(--border);border-radius:7px;padding:8px 12px;font-size:13px;outline:none"/>
+        <button class="btn btn-primary" onclick="markBooked('${req.id}',document.getElementById('conf-link').value,'')"><i class="ti ti-check"></i> Mark Booked & Notify</button>`;
+        } else {
+          primary = `<button class="btn btn-outline" onclick="closePanel()">Close</button>`;
+        }
+        let secondary = '';
+        if (canCancel) secondary += `<button class="btn btn-outline" onclick="cancelOrder('${req.id}')"><i class="ti ti-ban"></i> Cancel Order</button>`;
+        if (canDelete) secondary += `<button class="btn btn-err" onclick="deleteOrder('${req.id}')"><i class="ti ti-trash"></i> Delete from Sheet</button>`;
+        const spacer = (secondary && (canApprove || canBook)) ? '' : (secondary ? '<div style="flex:1"></div>' : '');
+        return `<div class="pf">${secondary}${spacer}${primary}</div>`;
+      })()}
     </div>
   </div>`;
 }
