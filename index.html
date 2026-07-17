@@ -25,7 +25,7 @@
     ].join(" "),
     LEADERSHIP_THRESHOLD: 400,   // refreshed from the server on load
     SESSION_IDLE_MINUTES: 120,   // auto sign-out after this many minutes of no activity
-    VERSION: "4.9.2",
+    VERSION: "4.9.3",
   };
 </script>
 
@@ -1459,7 +1459,27 @@ async function submitRequest(formData) {
   await navigate('my-requests');
 }
 
+// If the approver typed in the comment box but didn't click "Comment", save it
+// (with their Notify/urgent choices) before the decision runs. Returns false if
+// the comment failed to save, so the caller can abort and not lose it.
+async function flushPendingComment(reqID) {
+  const el = document.getElementById('cmt-text');
+  const text = (el && el.value ? el.value : '').trim();
+  if (!text) return true;
+  const urgent = !!(document.getElementById('cmt-urgent') && document.getElementById('cmt-urgent').checked);
+  const notify = [...document.querySelectorAll('.cmt-notify-cb:checked')].map(c => c.value);
+  try {
+    await api('addComment', { reqID, text, urgent, notify });
+    if (el) el.value = '';
+    return true;
+  } catch (e) {
+    toast('Could not save your comment: ' + e.message + ' — decision not submitted, please try again.', 'err');
+    return false;
+  }
+}
+
 async function approveRequest(reqID, decision) {
+  if (!(await flushPendingComment(reqID))) return;
   try {
     const res = await api('decide', { reqID, decision });
     toast(decision === 'approve'
@@ -1471,6 +1491,7 @@ async function approveRequest(reqID, decision) {
 }
 
 async function leadershipDecision(reqID, decision) {
+  if (!(await flushPendingComment(reqID))) return;
   try {
     await api('leadershipDecide', { reqID, decision });
     toast(decision === 'approve' ? 'Leadership approved! Sent to procurement queue.' : 'Rejected. Requestor notified.', decision === 'approve' ? 'ok' : 'warn');
@@ -1491,6 +1512,7 @@ async function markBooked(reqID, confirmationLink, note, paymentMethod) {
 async function cancelOrder(reqID) {
   const note = prompt('Cancel this order?\n\nOptionally add a reason (the requestor will be notified):', '');
   if (note === null) return; // user backed out
+  if (!(await flushPendingComment(reqID))) return;
   try {
     await api('cancelRequest', { reqID, note: note.trim() });
     toast('Order cancelled. Requestor has been notified.', 'warn');
