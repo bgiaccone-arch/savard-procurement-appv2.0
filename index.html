@@ -25,7 +25,7 @@
     ].join(" "),
     LEADERSHIP_THRESHOLD: 400,   // refreshed from the server on load
     SESSION_IDLE_MINUTES: 120,   // auto sign-out after this many minutes of no activity
-    VERSION: "4.9.5",
+    VERSION: "4.9.6",
   };
 </script>
 
@@ -1538,13 +1538,22 @@ async function returnToApprover(reqID) {
   await navigate(currentPage);
 }
 
-async function savePayment(reqID) {
-  const el = document.getElementById('pay-edit');
-  const paymentMethod = el ? el.value : '';
+async function saveBilling(reqID) {
+  const g = id => { const el = document.getElementById(id); return el ? el.value : ''; };
+  const eeDeduction = g('bl-eeded') === 'YES' ? (g('bl-dedtype') + ' / ' + g('bl-freq')) : 'NO';
+  const payload = {
+    reqID,
+    corpDept: g('bl-corpdept'),
+    paymentMethod: g('bl-payment'),
+    customerBilled: g('bl-custbilled'),
+    customerName: g('bl-custname'),
+    customerPO: g('bl-custpo'),
+    eeDeduction,
+  };
   try {
-    await api('setPayment', { reqID, paymentMethod });
-    toast('Payment method updated.', 'ok');
-  } catch (e) { toast('Could not update payment: ' + e.message, 'err'); return; }
+    await api('updateBilling', payload);
+    toast('Billing details updated.', 'ok');
+  } catch (e) { toast('Could not update billing: ' + e.message, 'err'); return; }
   await loadAllData();
   openRequestDetail(reqID);
 }
@@ -1632,6 +1641,11 @@ function openRequestDetail(reqID) {
         || (req.submitterEmail||'').toLowerCase() === (CURRENT_USER.email||'').toLowerCase());
   const canDelete = CURRENT_USER.role==='Super Admin' && ['Cancelled','Rejected'].includes(req.status);
   const canReturn = ['Procurement Admin','Super Admin'].includes(CURRENT_USER.role) && req.status==='Ready to Book';
+  const canEditBilling = ['Procurement Admin','Leadership','Finance','Super Admin'].includes(CURRENT_USER.role);
+  const eeParts = (req.eeDeduction && req.eeDeduction !== 'NO') ? req.eeDeduction.split(' / ') : [];
+  const eeOn = eeParts.length > 0;
+  const eeType = eeParts[0] || '';
+  const eeFreq = eeParts[1] || '';
 
   const tlSteps = [
     {d:'done',t:'Submitted',m:`${req.submitterName} · ${fmtDate(req.submittedAt)}`},
@@ -1690,15 +1704,26 @@ function openRequestDetail(reqID) {
 
         <div class="fs-sec">
           <div class="fs-title">Billing</div>
+          ${canEditBilling ? `
+          <div class="dg">
+            <div><div class="dl">Corp Dept</div><div class="dv"><input id="bl-corpdept" value="${(req.corpDept||'').split('"').join('&quot;')}" style="width:100%;font-size:13px;padding:5px 7px;border:1px solid var(--border);border-radius:6px"/></div></div>
+            <div><div class="dl">Payment</div><div class="dv"><select id="bl-payment" style="width:100%;font-size:13px;padding:5px 7px;border:1px solid var(--border);border-radius:6px">${['','Card Payment','Invoiced','In Stock'].map(o=>`<option value="${o}"${(req.paymentMethod||'')===o?' selected':''}>${o||'\u2014 None \u2014'}</option>`).join('')}</select></div></div>
+            <div><div class="dl">Customer Billed</div><div class="dv"><select id="bl-custbilled" style="width:100%;font-size:13px;padding:5px 7px;border:1px solid var(--border);border-radius:6px">${['NO','YES'].map(o=>`<option${(req.customerBilled||'NO')===o?' selected':''}>${o}</option>`).join('')}</select></div></div>
+            <div><div class="dl">Customer Name</div><div class="dv"><input id="bl-custname" value="${(req.customerName||'').split('"').join('&quot;')}" style="width:100%;font-size:13px;padding:5px 7px;border:1px solid var(--border);border-radius:6px"/></div></div>
+            <div><div class="dl">Customer PO</div><div class="dv"><input id="bl-custpo" value="${(req.customerPO||'').split('"').join('&quot;')}" style="width:100%;font-size:13px;padding:5px 7px;border:1px solid var(--border);border-radius:6px"/></div></div>
+            <div><div class="dl">EE Deduction</div><div class="dv"><select id="bl-eeded" style="width:100%;font-size:13px;padding:5px 7px;border:1px solid var(--border);border-radius:6px">${['NO','YES'].map(o=>`<option${(eeOn?'YES':'NO')===o?' selected':''}>${o}</option>`).join('')}</select></div></div>
+            <div><div class="dl">Deduction Type</div><div class="dv"><select id="bl-dedtype" style="width:100%;font-size:13px;padding:5px 7px;border:1px solid var(--border);border-radius:6px">${['Housing - Hotel','Transportation Deduction','Travel Expense 1','Miscellaneous 1- NonTaxab','Advance'].map(o=>`<option${eeType===o?' selected':''}>${o}</option>`).join('')}</select></div></div>
+            <div><div class="dl">Frequency</div><div class="dv"><select id="bl-freq" style="width:100%;font-size:13px;padding:5px 7px;border:1px solid var(--border);border-radius:6px">${['One Time','Daily','Weekly','Monthly'].map(o=>`<option${eeFreq===o?' selected':''}>${o}</option>`).join('')}</select></div></div>
+          </div>
+          <div style="margin-top:12px;text-align:right"><button class="btn btn-primary btn-sm" onclick="saveBilling('${req.id}')"><i class="ti ti-device-floppy"></i> Save Billing</button></div>
+          ` : `
           <div class="dg">
             <div><div class="dl">Corp Dept</div><div class="dv">${req.corpDept||'—'}</div></div>
-            <div><div class="dl">Payment</div><div class="dv">${['Procurement Admin','Super Admin'].includes(CURRENT_USER.role)
-              ? `<select id="pay-edit" style="font-size:13px;padding:4px 6px;border:1px solid var(--border);border-radius:6px">${['','Card Payment','Invoiced','In Stock'].map(o=>`<option value="${o}"${(req.paymentMethod||'')===o?' selected':''}>${o||'\u2014 None \u2014'}</option>`).join('')}</select> <button class="btn btn-outline btn-sm" onclick="savePayment('${req.id}')"><i class="ti ti-device-floppy"></i> Save</button>`
-              : (req.paymentMethod||'—')}</div></div>
+            <div><div class="dl">Payment</div><div class="dv">${req.paymentMethod||'—'}</div></div>
             <div><div class="dl">Customer Billed</div><div class="dv">${req.customerBilled||'NO'}</div></div>
             <div><div class="dl">EE Deduction</div><div class="dv">${req.eeDeduction||'NO'}</div></div>
             ${req.customerName?`<div><div class="dl">Customer</div><div class="dv">${req.customerName}</div></div>`:''}
-          </div>
+          </div>`}
         </div>
 
         ${(req.govIDLink||req.link||req.attachmentLink)?`
