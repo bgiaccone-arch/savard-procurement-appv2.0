@@ -25,7 +25,7 @@
     ].join(" "),
     LEADERSHIP_THRESHOLD: 400,   // refreshed from the server on load
     SESSION_IDLE_MINUTES: 120,   // auto sign-out after this many minutes of no activity
-    VERSION: "4.9.3",
+    VERSION: "4.9.4",
   };
 </script>
 
@@ -1459,21 +1459,28 @@ async function submitRequest(formData) {
   await navigate('my-requests');
 }
 
-// If the approver typed in the comment box but didn't click "Comment", save it
-// (with their Notify/urgent choices) before the decision runs. Returns false if
-// the comment failed to save, so the caller can abort and not lose it.
+// If the approver typed in EITHER the "Add a comment" box or the footer
+// "Add a note" box but didn't click "Comment", save it before the decision
+// runs so it lands in the thread and in the decision email. Posted without a
+// separate notification, since the decision email already carries it. Returns
+// false if saving failed, so the caller can abort and not lose the text.
 async function flushPendingComment(reqID) {
-  const el = document.getElementById('cmt-text');
-  const text = (el && el.value ? el.value : '').trim();
-  if (!text) return true;
+  const cEl = document.getElementById('cmt-text');
+  const nEl = document.getElementById('approval-note');
+  const cTxt = (cEl && cEl.value ? cEl.value : '').trim();
+  const nTxt = (nEl && nEl.value ? nEl.value : '').trim();
+  const parts = [];
+  if (cTxt) parts.push(cTxt);
+  if (nTxt && nTxt !== cTxt) parts.push(nTxt);
+  if (!parts.length) return true;
   const urgent = !!(document.getElementById('cmt-urgent') && document.getElementById('cmt-urgent').checked);
-  const notify = [...document.querySelectorAll('.cmt-notify-cb:checked')].map(c => c.value);
   try {
-    await api('addComment', { reqID, text, urgent, notify });
-    if (el) el.value = '';
+    await api('addComment', { reqID, text: parts.join('\n'), urgent, notify: [] });
+    if (cEl) cEl.value = '';
+    if (nEl) nEl.value = '';
     return true;
   } catch (e) {
-    toast('Could not save your comment: ' + e.message + ' — decision not submitted, please try again.', 'err');
+    toast('Could not save your note: ' + e.message + ' — decision not submitted, please try again.', 'err');
     return false;
   }
 }
