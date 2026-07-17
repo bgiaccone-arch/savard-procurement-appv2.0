@@ -25,7 +25,7 @@
     ].join(" "),
     LEADERSHIP_THRESHOLD: 400,   // refreshed from the server on load
     SESSION_IDLE_MINUTES: 120,   // auto sign-out after this many minutes of no activity
-    VERSION: "4.9.4",
+    VERSION: "4.9.5",
   };
 </script>
 
@@ -1528,6 +1528,27 @@ async function cancelOrder(reqID) {
   await navigate(currentPage);
 }
 
+async function returnToApprover(reqID) {
+  if (!(await flushPendingComment(reqID))) return;
+  try {
+    await api('returnToApprover', { reqID });
+    toast('Returned to the branch approver for re-review.', 'warn');
+  } catch (e) { toast('Could not return request: ' + e.message, 'err'); return; }
+  closePanel();
+  await navigate(currentPage);
+}
+
+async function savePayment(reqID) {
+  const el = document.getElementById('pay-edit');
+  const paymentMethod = el ? el.value : '';
+  try {
+    await api('setPayment', { reqID, paymentMethod });
+    toast('Payment method updated.', 'ok');
+  } catch (e) { toast('Could not update payment: ' + e.message, 'err'); return; }
+  await loadAllData();
+  openRequestDetail(reqID);
+}
+
 async function deleteOrder(reqID) {
   if (!confirm('Permanently remove this request from the sheet?\n\nThis deletes the request and all of its items, approvals, and comments. This cannot be undone.')) return;
   try {
@@ -1610,6 +1631,7 @@ function openRequestDetail(reqID) {
     && (['Super Admin','Procurement Admin','Leadership'].includes(CURRENT_USER.role)
         || (req.submitterEmail||'').toLowerCase() === (CURRENT_USER.email||'').toLowerCase());
   const canDelete = CURRENT_USER.role==='Super Admin' && ['Cancelled','Rejected'].includes(req.status);
+  const canReturn = ['Procurement Admin','Super Admin'].includes(CURRENT_USER.role) && req.status==='Ready to Book';
 
   const tlSteps = [
     {d:'done',t:'Submitted',m:`${req.submitterName} · ${fmtDate(req.submittedAt)}`},
@@ -1670,7 +1692,9 @@ function openRequestDetail(reqID) {
           <div class="fs-title">Billing</div>
           <div class="dg">
             <div><div class="dl">Corp Dept</div><div class="dv">${req.corpDept||'—'}</div></div>
-            <div><div class="dl">Payment</div><div class="dv">${req.paymentMethod||'—'}</div></div>
+            <div><div class="dl">Payment</div><div class="dv">${['Procurement Admin','Super Admin'].includes(CURRENT_USER.role)
+              ? `<select id="pay-edit" style="font-size:13px;padding:4px 6px;border:1px solid var(--border);border-radius:6px">${['','Card Payment','Invoiced','In Stock'].map(o=>`<option value="${o}"${(req.paymentMethod||'')===o?' selected':''}>${o||'\u2014 None \u2014'}</option>`).join('')}</select> <button class="btn btn-outline btn-sm" onclick="savePayment('${req.id}')"><i class="ti ti-device-floppy"></i> Save</button>`
+              : (req.paymentMethod||'—')}</div></div>
             <div><div class="dl">Customer Billed</div><div class="dv">${req.customerBilled||'NO'}</div></div>
             <div><div class="dl">EE Deduction</div><div class="dv">${req.eeDeduction||'NO'}</div></div>
             ${req.customerName?`<div><div class="dl">Customer</div><div class="dv">${req.customerName}</div></div>`:''}
@@ -1753,6 +1777,7 @@ function openRequestDetail(reqID) {
           primary = `<button class="btn btn-outline" onclick="closePanel()">Close</button>`;
         }
         let secondary = '';
+        if (canReturn) secondary += `<button class="btn btn-outline" onclick="returnToApprover('${req.id}')"><i class="ti ti-arrow-back-up"></i> Return to Approver</button>`;
         if (canCancel) secondary += `<button class="btn btn-outline" onclick="cancelOrder('${req.id}')"><i class="ti ti-ban"></i> Cancel Order</button>`;
         if (canDelete) secondary += `<button class="btn btn-err" onclick="deleteOrder('${req.id}')"><i class="ti ti-trash"></i> Delete from Sheet</button>`;
         const spacer = (secondary && (canApprove || canBook)) ? '' : (secondary ? '<div style="flex:1"></div>' : '');
