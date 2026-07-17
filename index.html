@@ -25,7 +25,7 @@
     ].join(" "),
     LEADERSHIP_THRESHOLD: 400,   // refreshed from the server on load
     SESSION_IDLE_MINUTES: 120,   // auto sign-out after this many minutes of no activity
-    VERSION: "4.9.0",
+    VERSION: "4.9.1",
   };
 </script>
 
@@ -679,7 +679,7 @@ function parseRows(rows, keys) {
 function getRequestItems(reqID) { return _items.filter(i => i.requestID === reqID); }
 function getRequestApprovals(reqID) { return _approvals.filter(a => a.requestID === reqID); }
 function getApproverForBranch(branchName) {
-  const b = _branches.find(b => b.name === branchName && b.active==='TRUE');
+  const b = _branches.find(b => b.name === branchName && branchActive(b));
   return b ? b.primaryApproverEmail : '';
 }
 function getMyRequests() {
@@ -690,12 +690,21 @@ function getMyRequests() {
   return _requests;
 }
 function isQuote(req) { return (req.requestKind||'') === 'Quote Request'; }
+// A branch counts as active unless it is EXPLICITLY deactivated. Handles the
+// exact string 'TRUE', a real checkbox boolean, blank (manually-added rows),
+// and mixed case; only 'FALSE'/'NO'/'0'/false are treated as inactive.
+function branchActive(b) {
+  var v = b && b.active;
+  if (v === false) return false;
+  if (typeof v === 'string') { var s = v.trim().toUpperCase(); return s !== 'FALSE' && s !== 'NO' && s !== '0'; }
+  return true; // boolean true, blank, undefined -> active
+}
 // Branches a user can approve for: their assigned branches, plus any branch
 // where they are listed as the primary/backup approver.
 function getApproverBranches() {
   const set = new Set((CURRENT_USER.branches||[]).filter(Boolean));
   _branches.forEach(b => {
-    if (b.active==='TRUE' &&
+    if (branchActive(b) &&
         (b.primaryApproverEmail===CURRENT_USER.email || b.backupApproverEmail===CURRENT_USER.email)) {
       set.add(b.name);
     }
@@ -1152,7 +1161,7 @@ function renderApprovalRules() {
     <div>
       <div class="sh"><h3>Branch &rarr; Approver Assignments</h3><button class="btn btn-outline btn-sm" onclick="openAddBranch()"><i class="ti ti-plus"></i> Add</button></div>
       <div class="tw">
-        ${_branches.filter(b=>b.active==='TRUE').map(b=>`
+        ${_branches.filter(branchActive).map(b=>`
         <div style="padding:10px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:12px;font-size:13px">
           <span class="btag">${b.name}</span>
           <span style="flex:1">${b.primaryApproverEmail||'—'}</span>
@@ -1727,7 +1736,7 @@ function openRequestDetail(reqID) {
 let itemCount = 1;
 
 function openNewRequest() {
-  const branches = _branches.filter(b=>b.active==='TRUE').map(b=>`<option>${b.name}</option>`).join('');
+  const branches = _branches.filter(branchActive).map(b=>`<option>${b.name}</option>`).join('');
   const ov = document.getElementById('overlays');
   ov.innerHTML = `
   <div class="po" onclick="if(event.target===this)closePanel()">
@@ -2089,7 +2098,7 @@ function openBookingPanel(reqID) {
 }
 
 function openAddUser() {
-  const branches = _branches.filter(b=>b.active==='TRUE');
+  const branches = _branches.filter(branchActive);
   const ov = document.getElementById('overlays');
   ov.innerHTML = `
   <div class="po" onclick="if(event.target===this)closePanel()">
@@ -2310,7 +2319,7 @@ function renderAdminPanel() {
           <td style="font-size:12px;color:var(--muted)">${b.type||'Branch'}</td>
           <td style="font-size:13px">${b.primaryApproverEmail||'<span style="color:var(--err)">⚠ Not assigned</span>'}</td>
           <td style="font-size:13px;color:var(--muted)">${b.backupApproverEmail||'—'}</td>
-          <td>${b.active==='TRUE'?'<span class="bdg b-ok">Active</span>':'<span class="bdg b-gray">Inactive</span>'}</td>
+          <td>${branchActive(b)?'<span class="bdg b-ok">Active</span>':'<span class="bdg b-gray">Inactive</span>'}</td>
           <td><button class="btn btn-outline btn-sm" onclick="openEditBranch('${b.id}')"><i class="ti ti-edit"></i> Edit</button></td>
         </tr>`).join('')}
       </tbody>
@@ -2394,7 +2403,7 @@ async function deleteUser(userID) {
 function openEditUserFull(email) {
   const user = _users.find(u=>u.email===email);
   if (!user) return;
-  const branches = _branches.filter(b=>b.active==='TRUE');
+  const branches = _branches.filter(branchActive);
   const allRoles = ['Requestor','Branch Approver','Procurement Admin','Leadership','Finance','Super Admin'];
   const userBranches = (user.branches||'').split('|').filter(Boolean);
 
@@ -2534,7 +2543,7 @@ function openBranchPanel(id) {
   const b = id ? _branches.find(x => x.id === id) : null;
   const editing = !!b;
   const type = (b && b.type) || 'Branch';
-  const active = b ? (b.active==='TRUE') : true;
+  const active = b ? branchActive(b) : true;
   const ov = document.getElementById('overlays');
   ov.innerHTML = `
   <div class="po" onclick="if(event.target===this)closePanel()">
@@ -2599,7 +2608,7 @@ async function saveBranch(id) {
 // Assign one approver to many branches at once (issue: multi-branch approver).
 function openAssignApprover() {
   const ov = document.getElementById('overlays');
-  const branches = _branches.filter(b => b.active==='TRUE');
+  const branches = _branches.filter(branchActive);
   ov.innerHTML = `
   <div class="po" onclick="if(event.target===this)closePanel()">
     <div class="panel" style="max-width:480px">
