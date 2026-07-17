@@ -25,7 +25,7 @@
     ].join(" "),
     LEADERSHIP_THRESHOLD: 400,   // refreshed from the server on load
     SESSION_IDLE_MINUTES: 120,   // auto sign-out after this many minutes of no activity
-    VERSION: "4.9.1",
+    VERSION: "4.9.2",
   };
 </script>
 
@@ -1736,7 +1736,12 @@ function openRequestDetail(reqID) {
 let itemCount = 1;
 
 function openNewRequest() {
-  const branches = _branches.filter(branchActive).map(b=>`<option>${b.name}</option>`).join('');
+  const myBranches = (CURRENT_USER.branches || []).filter(Boolean);
+  // Requestors and Branch Approvers may only submit for their assigned branch(es);
+  // elevated roles submit on others' behalf and may pick any active branch.
+  const canPickAnyBranch = ['Procurement Admin','Super Admin','Leadership','Finance'].includes(CURRENT_USER.role);
+  const branchNames = [...new Set(canPickAnyBranch ? _branches.filter(branchActive).map(b=>b.name) : myBranches)];
+  const branchOpts = branchNames.map(n=>`<option>${n}</option>`).join('');
   const ov = document.getElementById('overlays');
   ov.innerHTML = `
   <div class="po" onclick="if(event.target===this)closePanel()">
@@ -1783,7 +1788,7 @@ function openNewRequest() {
           <div class="fs-title">Request Info</div>
           <div class="fr full">
             <div class="fg"><label>Branch / Department <span class="req">*</span></label>
-              <select id="nf-branch">${CURRENT_USER.branches.map(b=>`<option>${b}</option>`).join('')}${branches}</select></div>
+              <select id="nf-branch">${branchOpts}</select></div>
           </div>
           <div class="fr full">
             <div class="fg"><label>Link</label>
