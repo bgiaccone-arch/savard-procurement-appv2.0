@@ -25,7 +25,7 @@
     ].join(" "),
     LEADERSHIP_THRESHOLD: 400,   // refreshed from the server on load
     SESSION_IDLE_MINUTES: 120,   // auto sign-out after this many minutes of no activity
-    VERSION: "4.9.7",
+    VERSION: "4.9.8",
   };
 </script>
 
@@ -1657,6 +1657,18 @@ function openRequestDetail(reqID) {
   const canReturn = ['Procurement Admin','Super Admin'].includes(CURRENT_USER.role) && req.status==='Ready to Book';
   const canEditBilling = ['Procurement Admin','Leadership','Finance','Super Admin'].includes(CURRENT_USER.role);
   const canAttach = canEditBilling;
+  // Department field options: active Branches + Corporate Departments (Branches tab 'type').
+  const _brActive = _branches.filter(branchActive);
+  const _deptCur = req.corpDept || '';
+  const _deptKnown = _brActive.some(b => b.name === _deptCur);
+  const _brList = _brActive.filter(b => (b.type || 'Branch') !== 'Department');
+  const _deptList = _brActive.filter(b => (b.type || '') === 'Department');
+  const deptSelectHtml = `<select id="bl-corpdept" style="width:100%;font-size:13px;padding:5px 7px;border:1px solid var(--border);border-radius:6px">
+    <option value="">\u2014 None \u2014</option>
+    ${(_deptCur && !_deptKnown) ? `<option selected>${_deptCur.split('<').join('&lt;')}</option>` : ''}
+    ${_brList.length ? `<optgroup label="Branches">${_brList.map(b=>`<option${_deptCur===b.name?' selected':''}>${b.name}</option>`).join('')}</optgroup>` : ''}
+    ${_deptList.length ? `<optgroup label="Corporate Departments">${_deptList.map(b=>`<option${_deptCur===b.name?' selected':''}>${b.name}</option>`).join('')}</optgroup>` : ''}
+  </select>`;
   const eeParts = (req.eeDeduction && req.eeDeduction !== 'NO') ? req.eeDeduction.split(' / ') : [];
   const eeOn = eeParts.length > 0;
   const eeType = eeParts[0] || '';
@@ -1721,7 +1733,7 @@ function openRequestDetail(reqID) {
           <div class="fs-title">Billing</div>
           ${canEditBilling ? `
           <div class="dg">
-            <div><div class="dl">Corp Dept</div><div class="dv"><input id="bl-corpdept" value="${(req.corpDept||'').split('"').join('&quot;')}" style="width:100%;font-size:13px;padding:5px 7px;border:1px solid var(--border);border-radius:6px"/></div></div>
+            <div><div class="dl">Department</div><div class="dv">${deptSelectHtml}</div></div>
             <div><div class="dl">Payment</div><div class="dv"><select id="bl-payment" style="width:100%;font-size:13px;padding:5px 7px;border:1px solid var(--border);border-radius:6px">${['','Card Payment','Invoiced','In Stock'].map(o=>`<option value="${o}"${(req.paymentMethod||'')===o?' selected':''}>${o||'\u2014 None \u2014'}</option>`).join('')}</select></div></div>
             <div><div class="dl">Customer Billed</div><div class="dv"><select id="bl-custbilled" style="width:100%;font-size:13px;padding:5px 7px;border:1px solid var(--border);border-radius:6px">${['NO','YES'].map(o=>`<option${(req.customerBilled||'NO')===o?' selected':''}>${o}</option>`).join('')}</select></div></div>
             <div><div class="dl">Customer Name</div><div class="dv"><input id="bl-custname" value="${(req.customerName||'').split('"').join('&quot;')}" style="width:100%;font-size:13px;padding:5px 7px;border:1px solid var(--border);border-radius:6px"/></div></div>
@@ -1733,7 +1745,7 @@ function openRequestDetail(reqID) {
           <div style="margin-top:12px;text-align:right"><button class="btn btn-primary btn-sm" onclick="saveBilling('${req.id}')"><i class="ti ti-device-floppy"></i> Save Billing</button></div>
           ` : `
           <div class="dg">
-            <div><div class="dl">Corp Dept</div><div class="dv">${req.corpDept||'—'}</div></div>
+            <div><div class="dl">Department</div><div class="dv">${req.corpDept||'—'}</div></div>
             <div><div class="dl">Payment</div><div class="dv">${req.paymentMethod||'—'}</div></div>
             <div><div class="dl">Customer Billed</div><div class="dv">${req.customerBilled||'NO'}</div></div>
             <div><div class="dl">EE Deduction</div><div class="dv">${req.eeDeduction||'NO'}</div></div>
