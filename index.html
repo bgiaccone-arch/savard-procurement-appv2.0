@@ -25,7 +25,7 @@
     ].join(" "),
     LEADERSHIP_THRESHOLD: 400,   // refreshed from the server on load
     SESSION_IDLE_MINUTES: 120,   // auto sign-out after this many minutes of no activity
-    VERSION: "4.9.6",
+    VERSION: "4.9.7",
   };
 </script>
 
@@ -1558,6 +1558,20 @@ async function saveBilling(reqID) {
   openRequestDetail(reqID);
 }
 
+async function attachFileToRequest(reqID, inputEl) {
+  const file = inputEl && inputEl.files && inputEl.files[0];
+  if (!file) return;
+  try {
+    toast('Uploading attachment…', 'ok');
+    const base64 = await fileToBase64(file);
+    const up = await api('uploadAttachment', { base64, mimeType: file.type || 'application/octet-stream', fileName: file.name, namePrefix: reqID });
+    await api('addAttachment', { reqID, link: up.link });
+    toast('Attachment added.', 'ok');
+  } catch (e) { toast('Could not attach file: ' + e.message, 'err'); return; }
+  await loadAllData();
+  openRequestDetail(reqID);
+}
+
 async function deleteOrder(reqID) {
   if (!confirm('Permanently remove this request from the sheet?\n\nThis deletes the request and all of its items, approvals, and comments. This cannot be undone.')) return;
   try {
@@ -1642,6 +1656,7 @@ function openRequestDetail(reqID) {
   const canDelete = CURRENT_USER.role==='Super Admin' && ['Cancelled','Rejected'].includes(req.status);
   const canReturn = ['Procurement Admin','Super Admin'].includes(CURRENT_USER.role) && req.status==='Ready to Book';
   const canEditBilling = ['Procurement Admin','Leadership','Finance','Super Admin'].includes(CURRENT_USER.role);
+  const canAttach = canEditBilling;
   const eeParts = (req.eeDeduction && req.eeDeduction !== 'NO') ? req.eeDeduction.split(' / ') : [];
   const eeOn = eeParts.length > 0;
   const eeType = eeParts[0] || '';
@@ -1726,15 +1741,16 @@ function openRequestDetail(reqID) {
           </div>`}
         </div>
 
-        ${(req.govIDLink||req.link||req.attachmentLink)?`
+        ${(req.govIDLink||req.link||req.attachmentLink||canAttach)?`
         <div class="fs-sec">
           <div class="fs-title">Links &amp; Documents</div>
-          <div style="display:flex;flex-wrap:wrap;gap:8px">
-            ${req.attachmentLink?`<a class="dl-link" href="${req.attachmentLink}" target="_blank"><i class="ti ti-photo" style="font-size:12px"></i>Attachment</a>`:''}
+          <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center">
+            ${(req.attachmentLink||'').split('|').map(s=>s.trim()).filter(Boolean).map((l,i)=>`<a class="dl-link" href="${l}" target="_blank"><i class="ti ti-photo" style="font-size:12px"></i>Attachment${i>0?(' '+(i+1)):''}</a>`).join('')}
             ${req.link?`<a class="dl-link" href="${req.link}" target="_blank"><i class="ti ti-link" style="font-size:12px"></i>Link</a>`:''}
             ${req.govIDLink?`<a class="dl-link" href="${req.govIDLink}" target="_blank"><i class="ti ti-id" style="font-size:12px"></i>Gov ID</a>`:''}
             ${items.filter(i=>i.confirmationDocLink).map(i=>`<a class="dl-link" href="${i.confirmationDocLink}" target="_blank"><i class="ti ti-file-text" style="font-size:12px"></i>Confirmation</a>`).join('')}
             ${items.filter(i=>i.receiptFileLink).map(i=>`<a class="dl-link" href="${i.receiptFileLink}" target="_blank"><i class="ti ti-receipt" style="font-size:12px"></i>Receipt</a>`).join('')}
+            ${canAttach?`<label class="dl-link" style="cursor:pointer;border-style:dashed"><i class="ti ti-paperclip" style="font-size:12px"></i>Attach File<input type="file" accept="image/*,application/pdf,.png,.jpg,.jpeg,.gif,.webp,.heic" style="display:none" onchange="attachFileToRequest('${req.id}', this)"/></label>`:''}
           </div>
         </div>`:''}
 
