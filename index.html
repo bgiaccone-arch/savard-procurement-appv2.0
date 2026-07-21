@@ -25,7 +25,8 @@
     ].join(" "),
     LEADERSHIP_THRESHOLD: 400,   // refreshed from the server on load
     SESSION_IDLE_MINUTES: 120,   // auto sign-out after this many minutes of no activity
-    VERSION: "4.9.9",
+    TESTING_DELETE: true,        // TEMPORARY (testing): lets Super Admin select & delete ANY requests on All Requests. Set to false to disable before go-live.
+    VERSION: "4.9.10",
   };
 </script>
 
@@ -867,6 +868,8 @@ function fmtDate(d) {
 
 function renderRequestTable(reqs, title, showBranchFilter) {
   if (!reqs.length) return `<div class="empty"><i class="ti ti-files"></i><p>No requests found.</p></div>`;
+  // TEMPORARY (testing): Super Admin multi-select delete on All Requests, controlled by CONFIG.TESTING_DELETE.
+  const bulkDelete = !!CONFIG.TESTING_DELETE && showBranchFilter && CURRENT_USER.role === 'Super Admin';
   const rows = reqs.map(r => {
     const items = getRequestItems(r.id);
     const typeChips = items.map(i=>`<span class="tc"><i class="ti ${typeIcon(i.itemType)}" aria-hidden="true"></i>${i.itemType}</span>`).join(' ');
@@ -875,6 +878,7 @@ function renderRequestTable(reqs, title, showBranchFilter) {
     const branchAttr = (r.branch||'').split('"').join('&quot;');
     const statusAttr = (r.status||'').split('"').join('&quot;');
     return `<tr class="cr" data-branch="${branchAttr}" data-status="${statusAttr}" onclick="openRequestDetail('${r.id}')">
+      ${bulkDelete?`<td onclick="event.stopPropagation()" style="text-align:center"><input type="checkbox" class="req-sel" value="${r.id}" style="width:auto"/></td>`:''}
       <td><span style="font-weight:600;color:var(--navy)">${r.id}</span>${isQuote(r)?` <span class="bdg b-info" style="font-size:9px;padding:1px 6px">QUOTE</span>`:''}</td>
       <td>${r.submitterName}</td>
       <td><span class="bdg b-navy">${r.branch||'—'}</span></td>
@@ -913,9 +917,10 @@ function renderRequestTable(reqs, title, showBranchFilter) {
       </select>
       ${branchFilter}
       ${(showBranchFilter && CURRENT_USER.role==='Super Admin') ? `<button type="button" class="btn btn-outline btn-sm" title="Remove all Cancelled and Rejected requests from the sheet" style="white-space:nowrap" onclick="purgeClosedRequests()"><i class="ti ti-trash"></i> Clean up closed</button>` : ''}
+      ${bulkDelete ? `<button type="button" class="btn btn-err btn-sm" title="TESTING ONLY: permanently delete the selected requests (any status)" style="white-space:nowrap" onclick="deleteSelectedRequests()"><i class="ti ti-trash-x"></i> Delete Selected</button>` : ''}
     </div>
     <table id="req-table">
-      <thead><tr><th>ID</th><th>Submitted By</th><th>Branch</th><th>Types</th><th>Total</th><th>Status</th><th>Date</th></tr></thead>
+      <thead><tr>${bulkDelete?`<th style="width:32px;text-align:center"><input type="checkbox" title="Select all" onclick="toggleSelectAllRequests(this)" style="width:auto"/></th>`:''}<th>ID</th><th>Submitted By</th><th>Branch</th><th>Types</th><th>Total</th><th>Status</th><th>Date</th></tr></thead>
       <tbody>${rows}</tbody>
     </table>
   </div>`;
@@ -1590,6 +1595,26 @@ async function purgeClosedRequests() {
     const res = await api('purgeClosed', {});
     toast(`Removed ${res.requests} request${res.requests===1?'':'s'} from the sheet.`, 'ok');
   } catch (e) { toast('Could not remove requests: ' + e.message, 'err'); return; }
+  await navigate(currentPage);
+}
+
+// TEMPORARY (testing): bulk-delete selected requests of ANY status (Super Admin).
+// Remove along with CONFIG.TESTING_DELETE and the backend deleteRequestsBulk action before go-live.
+function toggleSelectAllRequests(master) {
+  document.querySelectorAll('#req-table tbody tr').forEach(tr => {
+    if (tr.style.display === 'none') return; // only visible (filtered) rows
+    const cb = tr.querySelector('.req-sel');
+    if (cb) cb.checked = master.checked;
+  });
+}
+async function deleteSelectedRequests() {
+  const ids = [...document.querySelectorAll('.req-sel:checked')].map(c => c.value);
+  if (!ids.length) { toast('Select one or more requests first.', 'warn'); return; }
+  if (!confirm(`TESTING: permanently delete ${ids.length} selected request${ids.length===1?'':'s'} from the sheet, regardless of status?\n\nThis also removes their items, approvals, and comments and cannot be undone.`)) return;
+  try {
+    const res = await api('deleteRequestsBulk', { reqIDs: ids });
+    toast(`Deleted ${res.requests} request${res.requests===1?'':'s'} from the sheet.`, 'ok');
+  } catch (e) { toast('Could not delete requests: ' + e.message, 'err'); return; }
   await navigate(currentPage);
 }
 
