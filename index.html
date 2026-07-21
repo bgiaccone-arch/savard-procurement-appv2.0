@@ -25,7 +25,7 @@
     ].join(" "),
     LEADERSHIP_THRESHOLD: 400,   // refreshed from the server on load
     SESSION_IDLE_MINUTES: 120,   // auto sign-out after this many minutes of no activity
-    VERSION: "4.9.8",
+    VERSION: "4.9.9",
   };
 </script>
 
@@ -2270,11 +2270,28 @@ async function saveNewUser() {
 }
 
 // ── Notification bell ──
+// Does this request "pertain to" the current user for notification purposes?
+// Everyone: their own submissions, CC's, and their own branch/dept (as approver
+// or assignee). Additionally, Procurement Admins and Leadership are in-scope for
+// ANY branch once a request reaches their approval level. Super Admins get no
+// blanket cross-branch scope — only what genuinely pertains to them.
+function requestPertainsToMe(req) {
+  if (!req) return false;
+  const me = (CURRENT_USER.email || '').toLowerCase();
+  if ((req.submitterEmail || '').toLowerCase() === me) return true;
+  if ((req.cc || '').toLowerCase().split('|').filter(Boolean).includes(me)) return true;
+  const mine = getApproverBranches();
+  if (mine.includes(req.branch)) return true;
+  if ((getApproverForBranch(req.branch) || '').toLowerCase() === me) return true;
+  if (CURRENT_USER.role === 'Leadership' && req.status === 'Leadership Approval') return true;
+  if (CURRENT_USER.role === 'Procurement Admin' && req.status === 'Ready to Book') return true;
+  return false;
+}
 function getMyUrgentComments() {
   const myEmail = (CURRENT_USER.email||'').toLowerCase();
   const reqById = {}; _requests.forEach(r => reqById[r.id] = r);
   return _comments
-    .filter(c => c.id && c.urgent === 'TRUE' && (c.authorEmail||'').toLowerCase() !== myEmail && reqById[c.requestID])
+    .filter(c => c.id && c.urgent === 'TRUE' && (c.authorEmail||'').toLowerCase() !== myEmail && requestPertainsToMe(reqById[c.requestID]))
     .sort((a,b) => new Date(b.createdAt||0) - new Date(a.createdAt||0));
 }
 function seenUrgentSet() {
@@ -2292,7 +2309,7 @@ function updateBell() {
   if (!dot) return;
   const btn = dot.closest('.nb-btn');
   const pending = (typeof getPendingApprovals === 'function' && ['Branch Approver','Super Admin'].includes(CURRENT_USER.role)) ? getPendingApprovals() : [];
-  const leadership = (typeof getLeadershipQueue === 'function' && ['Leadership','Super Admin'].includes(CURRENT_USER.role)) ? getLeadershipQueue() : [];
+  const leadership = (typeof getLeadershipQueue === 'function' && CURRENT_USER.role === 'Leadership') ? getLeadershipQueue() : [];
   const urgent = getMyUrgentComments();
   const seen = seenUrgentSet();
   const unseenUrgent = urgent.filter(c => !seen.has(c.id));
@@ -2306,6 +2323,7 @@ function openNotifs() {
   const urgent = getMyUrgentComments();
   const reqById = {}; _requests.forEach(r => reqById[r.id] = r);
   const pend = (['Branch Approver','Super Admin'].includes(CURRENT_USER.role) && typeof getPendingApprovals==='function') ? getPendingApprovals().slice(0,5) : [];
+  const lead = (CURRENT_USER.role==='Leadership' && typeof getLeadershipQueue==='function') ? getLeadershipQueue().slice(0,5) : [];
   const ov = document.getElementById('overlays');
   ov.innerHTML = `
   <div class="po" onclick="if(event.target===this)closePanel()">
@@ -2335,7 +2353,17 @@ function openNotifs() {
           </div>
           <button class="btn btn-outline btn-sm" style="margin-left:auto" onclick="closePanel();openRequestDetail('${r.id}')">Review</button>
         </div>`).join('')}
-        ${(!urgent.length && !pend.length) ? '<div style="padding:24px;text-align:center;color:var(--muted);font-size:13px">No pending notifications</div>' : ''}
+        ${lead.map(r=>`
+        <div style="padding:12px 16px;border-bottom:1px solid var(--border);display:flex;gap:10px;align-items:flex-start;background:var(--info-bg)">
+          <div style="width:32px;height:32px;border-radius:50%;background:#ede9fe;display:flex;align-items:center;justify-content:center;flex-shrink:0"><i class="ti ti-shield-check" style="color:#7c3aed;font-size:15px"></i></div>
+          <div>
+            <div style="font-size:13px;font-weight:600">Leadership approval: ${r.id}</div>
+            <div style="font-size:12px;color:var(--muted);margin-top:2px">${r.submitterName} · ${r.branch} · ${fmtAmt(r.totalAmount)}</div>
+            <div style="font-size:11px;color:var(--xs);margin-top:3px">${fmtDate(r.submittedAt)}</div>
+          </div>
+          <button class="btn btn-outline btn-sm" style="margin-left:auto" onclick="closePanel();openRequestDetail('${r.id}')">Review</button>
+        </div>`).join('')}
+        ${(!urgent.length && !pend.length && !lead.length) ? '<div style="padding:24px;text-align:center;color:var(--muted);font-size:13px">No pending notifications</div>' : ''}
       </div>
       <div class="pf"><button class="btn btn-outline" onclick="closePanel()">Close</button></div>
     </div>
