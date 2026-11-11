@@ -26,7 +26,7 @@
     LEADERSHIP_THRESHOLD: 400,   // refreshed from the server on load
     SESSION_IDLE_MINUTES: 120,   // auto sign-out after this many minutes of no activity
     TESTING_DELETE: true,        // TEMPORARY (testing): lets Super Admin select & delete ANY requests on All Requests. Set to false to disable before go-live.
-    VERSION: "4.9.14",
+    VERSION: "4.9.15",
   };
 </script>
 
@@ -1023,9 +1023,11 @@ function renderPendingApprovals() {
 function renderQueue() {
   const q = getProcurementQueue();
   if (!q.length) return `<div class="empty"><i class="ti ti-stack-2"></i><p>No requests ready to book.</p></div>`;
+  const canBulk = ['Procurement Admin','Super Admin'].includes(CURRENT_USER.role);
   const rows = q.map(r => {
-    const items = getRequestItems(r.id);
+    const items = activeRequestItems(r.id);
     return `<tr>
+      ${canBulk?`<td onclick="event.stopPropagation()" style="text-align:center"><input type="checkbox" class="bulk-sel" value="${r.id}" style="width:auto"></td>`:''}
       <td><span style="font-weight:600;color:var(--navy)">${r.id}</span></td>
       <td><span class="bdg b-navy">${r.branch}</span></td>
       <td>${r.travelerName}</td>
@@ -1041,8 +1043,13 @@ function renderQueue() {
     </tr>`;
   }).join('');
   return `<div class="tw">
-    <div class="th-row"><span class="tt">Ready to Book</span><span class="bdg b-info">${q.length} requests</span></div>
-    <table><thead><tr><th>ID</th><th>Branch</th><th>Traveler</th><th>Items</th><th>Total</th><th>Submitted</th><th>Action</th></tr></thead>
+    <div class="th-row"><span class="tt">Ready to Book</span><span class="bdg b-info">${q.length} requests</span>
+      ${canBulk?`<div style="margin-left:auto;display:flex;gap:8px">
+        <button class="btn btn-primary btn-sm" title="Book all selected (no confirmation prompt)" onclick="runBulk('book','Mark booked')"><i class="ti ti-checks"></i> Mark Booked (selected)</button>
+        <button class="btn btn-outline btn-sm" title="Return all selected to the branch approver" onclick="runBulk('returnToApprover','Return to approver')"><i class="ti ti-arrow-back-up"></i> Return (selected)</button>
+      </div>`:''}
+    </div>
+    <table><thead><tr>${canBulk?`<th style="width:32px;text-align:center"><input type="checkbox" title="Select all" onclick="bulkToggleAll(this)" style="width:auto"></th>`:''}<th>ID</th><th>Branch</th><th>Traveler</th><th>Items</th><th>Total</th><th>Submitted</th><th>Action</th></tr></thead>
     <tbody>${rows}</tbody></table>
   </div>`;
 }
@@ -1050,15 +1057,24 @@ function renderQueue() {
 function renderLeadershipApprovals() {
   const la = getLeadershipQueue();
   if (!la.length) return `<div class="empty"><i class="ti ti-crown"></i><p>No high-value requests awaiting approval.</p></div>`;
+  const canBulk = ['Leadership','Super Admin'].includes(CURRENT_USER.role);
   return `
   <div class="infobox warn" style="margin-bottom:20px">
     <i class="ti ti-alert-triangle" style="font-size:20px;flex-shrink:0"></i>
     <div><strong>High-Value Requests</strong> — These exceed the $${CONFIG.LEADERSHIP_THRESHOLD} threshold and require Leadership approval before procurement can book.</div>
   </div>
+  ${canBulk?`<div class="th-row" style="border:1px solid var(--border);border-radius:8px;margin-bottom:16px">
+    <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer"><input type="checkbox" onclick="bulkToggleAll(this)" style="width:auto"> Select all</label>
+    <div style="margin-left:auto;display:flex;gap:8px">
+      <button class="btn btn-ok btn-sm" onclick="runBulk('leadershipApprove','Approve')"><i class="ti ti-checks"></i> Approve Selected</button>
+      <button class="btn btn-err btn-sm" onclick="runBulk('leadershipReject','Reject')"><i class="ti ti-x"></i> Reject Selected</button>
+    </div>
+  </div>`:''}
   ${la.map(r => {
     const items = getRequestItems(r.id);
     return `<div class="tw" style="margin-bottom:16px;padding:18px">
       <div style="display:flex;align-items:center;gap:12px;margin-bottom:14px">
+        ${canBulk?`<input type="checkbox" class="bulk-sel" value="${r.id}" style="width:auto" title="Select for bulk action">`:''}
         <span style="font-size:16px;font-weight:700;color:var(--navy)">${r.id}</span>
         ${statusBadge(r.status)}
         <span class="pf-flag"><i class="ti ti-alert-triangle" style="font-size:11px"></i>${fmtAmt(r.totalAmount)}</span>
@@ -1663,6 +1679,21 @@ async function purgeClosedRequests() {
 
 // TEMPORARY (testing): bulk-delete selected requests of ANY status (Super Admin).
 // Remove along with CONFIG.TESTING_DELETE and the backend deleteRequestsBulk action before go-live.
+// Bulk status changes (Leadership approve/reject, Purchasing book/return).
+function bulkSelectedIds() { return [...document.querySelectorAll('.bulk-sel:checked')].map(c => c.value); }
+function bulkToggleAll(master) { document.querySelectorAll('.bulk-sel').forEach(c => { c.checked = master.checked; }); }
+async function runBulk(action, label) {
+  const ids = bulkSelectedIds();
+  if (!ids.length) { toast('Select one or more requests first.', 'warn'); return; }
+  if (!confirm(`${label} ${ids.length} request${ids.length===1?'':'s'}? Each will send its usual notification.`)) return;
+  try {
+    const res = await api('bulkAction', { reqIDs: ids, action });
+    const failN = (res.failed || []).length;
+    toast(`${res.ok} done${failN ? `, ${failN} skipped` : ''}.`, failN ? 'warn' : 'ok');
+  } catch (e) { toast('Bulk action failed: ' + e.message, 'err'); return; }
+  await navigate(currentPage);
+}
+
 function toggleSelectAllRequests(master) {
   document.querySelectorAll('#req-table tbody tr').forEach(tr => {
     if (tr.style.display === 'none') return; // only visible (filtered) rows
