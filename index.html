@@ -26,7 +26,7 @@
     LEADERSHIP_THRESHOLD: 400,   // refreshed from the server on load
     SESSION_IDLE_MINUTES: 120,   // auto sign-out after this many minutes of no activity
     TESTING_DELETE: true,        // TEMPORARY (testing): lets Super Admin select & delete ANY requests on All Requests. Set to false to disable before go-live.
-    VERSION: "4.9.10",
+    VERSION: "4.9.11",
   };
 </script>
 
@@ -750,20 +750,23 @@ const PAGES = {
   'spend-threshold':    { title:'Spend Threshold', sub:'Leadership approval limit' },
   'audit-log':          { title:'Audit Log', sub:'Approval & decision history' },
   'admin-panel':        { title:'Admin Panel', sub:'System configuration & permissions' },
+  'pending-queue':      { title:'Pending Approvals', sub:'Requests awaiting branch approval' },
+  workflow:             { title:'Workflow & Alerts', sub:'How notifications are triggered and who receives them' },
 };
 const NAV_ICONS = {
   dashboard:'ti-layout-dashboard','my-requests':'ti-file-text','new-request':'ti-circle-plus',
   'pending-approvals':'ti-clipboard-check',queue:'ti-stack-2','all-requests':'ti-files',
   'leadership-approvals':'ti-crown',users:'ti-users','approval-rules':'ti-git-branch',
   reports:'ti-chart-bar','spend-threshold':'ti-adjustments-dollar','audit-log':'ti-history','admin-panel':'ti-shield-lock',
+  'pending-queue':'ti-clock-pause',workflow:'ti-route',
 };
 const ROLE_NAV = {
   Requestor:         [null,['dashboard','my-requests']],
   'Branch Approver': [null,['dashboard'],['Approvals',['pending-approvals']],['Requests',['my-requests','all-requests']],['Reports',['reports']]],
-  'Procurement Admin':[null,['dashboard'],['Booking',['queue']],['Requests',['all-requests']],['Admin',['spend-threshold','audit-log']]],
-  Leadership:        [null,['dashboard'],['Approvals',['leadership-approvals']],['Requests',['all-requests']],['Admin',['spend-threshold','audit-log']]],
+  'Procurement Admin':[null,['dashboard'],['Booking',['queue']],['Requests',['pending-queue','all-requests']],['Admin',['workflow','spend-threshold','audit-log']]],
+  Leadership:        [null,['dashboard'],['Approvals',['leadership-approvals']],['Requests',['all-requests']],['Admin',['workflow','spend-threshold','audit-log']]],
   Finance:           [null,['dashboard'],['Data',['all-requests']],['Admin',['spend-threshold','audit-log']]],
-  'Super Admin':     [null,['dashboard'],['Approvals',['pending-approvals']],['Operations',['all-requests']],['Administration',['approval-rules','reports','spend-threshold','audit-log','admin-panel']]],
+  'Super Admin':     [null,['dashboard'],['Approvals',['pending-approvals']],['Operations',['all-requests']],['Administration',['approval-rules','reports','workflow','spend-threshold','audit-log','admin-panel']]],
 };
 
 function renderNav() {
@@ -831,6 +834,8 @@ function renderPage() {
     case 'my-requests': c.innerHTML = renderRequestTable(getMyRequests(), 'My Requests'); break;
     case 'pending-approvals': c.innerHTML = renderPendingApprovals(); break;
     case 'all-requests': c.innerHTML = renderRequestTable(_requests, pageTitle('all-requests'), true); break;
+    case 'pending-queue': c.innerHTML = renderRequestTable(_requests.filter(r=>r.status==='Pending Approval'), pageTitle('pending-queue'), false); break;
+    case 'workflow': c.innerHTML = renderWorkflow(); break;
     case 'queue': c.innerHTML = renderQueue(); break;
     case 'leadership-approvals': c.innerHTML = renderLeadershipApprovals(); break;
     case 'approval-rules': c.innerHTML = renderApprovalRules(); break;
@@ -1103,6 +1108,41 @@ function renderSpendThreshold() {
       <i class="ti ti-info-circle" style="font-size:16px;flex-shrink:0;margin-top:1px"></i>
       <div>Changing the threshold affects only <strong>new</strong> requests submitted afterward. Requests already in the workflow keep the routing they were created with.</div>
     </div>
+  </div>`;
+}
+
+function renderWorkflow() {
+  const thr = fmtAmt(CONFIG.LEADERSHIP_THRESHOLD || 400);
+  const rows = [
+    ['New request submitted', 'Standard requestor submits', 'Pending Approval', 'Branch Approver for the request\u2019s branch/dept'],
+    ['New request submitted', `Submitted by an elevated role (Branch Approver, Purchasing, Leadership, Super Admin) \u2014 auto-approved; escalates only if over ${thr} and submitter isn\u2019t leadership-level`, 'Ready to Book or Leadership Approval', 'All Procurement Admins, or all Leadership if it escalates'],
+    ['Branch Approver approves', `Total is ${thr} or more`, 'Leadership Approval', 'All Leadership'],
+    ['Branch Approver approves', `Total is under ${thr}`, 'Ready to Book', 'All Procurement Admins'],
+    ['Branch Approver rejects', '\u2014', 'Rejected', 'Requestor'],
+    ['Leadership approves', '\u2014', 'Ready to Book', 'All Procurement Admins'],
+    ['Leadership rejects', '\u2014', 'Rejected', 'Requestor'],
+    ['Procurement marks booked / completes a quote', '\u2014', 'Completed', 'Requestor'],
+    ['Request cancelled', 'By Purchasing, Leadership, Super Admin, or the submitter', 'Cancelled', 'Requestor'],
+    ['Procurement returns to approver', '\u2014', 'Pending Approval', 'Branch Approver and the Requestor'],
+    ['New comment posted', 'Commenter ticks who to notify; the author is never emailed', 'No status change', 'The ticked audiences: Requestor, Approver (branch), Purchasing (all Procurement Admins), and/or Leadership'],
+  ];
+  const body = rows.map(r=>`
+    <tr>
+      <td style="font-weight:600;color:var(--navy);white-space:nowrap">${r[0]}</td>
+      <td style="font-size:13px;color:var(--muted)">${r[1]}</td>
+      <td>${statusBadge(r[2]) || `<span style="font-size:13px">${r[2]}</span>`}</td>
+      <td style="font-size:13px">${r[3]}</td>
+    </tr>`).join('');
+  return `
+  <div class="tw" style="padding:18px 20px;margin-bottom:16px">
+    <p style="font-size:13px;color:var(--muted);margin:0">This is a reference for how the portal\u2019s email alerts fire. Every alert is sent from the procurement mailbox, includes the request\u2019s items and comments, and has a button to open the portal. Branch-scoped alerts (approvals, rejections) go only to the people tied to that branch; cross-branch alerts reach Purchasing and Leadership only once a request has reached their stage.</p>
+  </div>
+  <div class="tw">
+    <div class="th-row"><span class="tt">Alert Triggers</span></div>
+    <table>
+      <thead><tr><th style="width:210px">Trigger</th><th>Condition</th><th style="width:150px">New Status</th><th style="width:230px">Who is notified</th></tr></thead>
+      <tbody>${body}</tbody>
+    </table>
   </div>`;
 }
 
