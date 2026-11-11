@@ -26,7 +26,7 @@
     LEADERSHIP_THRESHOLD: 400,   // refreshed from the server on load
     SESSION_IDLE_MINUTES: 120,   // auto sign-out after this many minutes of no activity
     TESTING_DELETE: true,        // TEMPORARY (testing): lets Super Admin select & delete ANY requests on All Requests. Set to false to disable before go-live.
-    VERSION: "4.9.13",
+    VERSION: "4.9.14",
   };
 </script>
 
@@ -678,6 +678,7 @@ function parseRows(rows, keys) {
 }
 
 function getRequestItems(reqID) { return _items.filter(i => i.requestID === reqID); }
+function activeRequestItems(reqID) { return getRequestItems(reqID).filter(i => (i.itemStatus||'') !== 'Removed'); }
 function getRequestApprovals(reqID) { return _approvals.filter(a => a.requestID === reqID); }
 function getApproverForBranch(branchName) {
   const b = _branches.find(b => b.name === branchName && branchActive(b));
@@ -876,7 +877,7 @@ function renderRequestTable(reqs, title, showBranchFilter) {
   // TEMPORARY (testing): Super Admin multi-select delete on All Requests, controlled by CONFIG.TESTING_DELETE.
   const bulkDelete = !!CONFIG.TESTING_DELETE && showBranchFilter && CURRENT_USER.role === 'Super Admin';
   const rows = reqs.map(r => {
-    const items = getRequestItems(r.id);
+    const items = activeRequestItems(r.id);
     const typeChips = items.map(i=>`<span class="tc"><i class="ti ${typeIcon(i.itemType)}" aria-hidden="true"></i>${i.itemType}</span>`).join(' ');
     const total = parseFloat(r.totalAmount)||0;
     const over = total >= CONFIG.LEADERSHIP_THRESHOLD;
@@ -1603,6 +1604,17 @@ async function saveBilling(reqID) {
   openRequestDetail(reqID);
 }
 
+async function removeItem(itemID, reqID) {
+  const reason = prompt('Remove this item from the request?\n\nAdd a reason (the requestor will be notified):', '');
+  if (reason === null) return;
+  try {
+    const res = await api('removeItem', { itemID, reason: reason.trim() });
+    toast('Item removed. New total ' + fmtAmt(res.newTotal) + '.', 'warn');
+  } catch (e) { toast('Could not remove item: ' + e.message, 'err'); return; }
+  await loadAllData();
+  openRequestDetail(reqID);
+}
+
 async function saveItemTracking(itemID, reqID) {
   const num = (document.getElementById('trk-num-' + itemID) || {}).value || '';
   const link = (document.getElementById('trk-link-' + itemID) || {}).value || '';
@@ -1745,6 +1757,13 @@ function openRequestDetail(reqID) {
     ${_brList.length ? `<optgroup label="Branches">${_brList.map(b=>`<option${_deptCur===b.name?' selected':''}>${b.name}</option>`).join('')}</optgroup>` : ''}
     ${_deptList.length ? `<optgroup label="Corporate Departments">${_deptList.map(b=>`<option${_deptCur===b.name?' selected':''}>${b.name}</option>`).join('')}</optgroup>` : ''}
   </select>`;
+  const canRemoveItems = !['Cancelled','Rejected'].includes(req.status) && (
+    CURRENT_USER.role === 'Super Admin' ||
+    (CURRENT_USER.role === 'Procurement Admin' && req.status === 'Ready to Book') ||
+    (CURRENT_USER.role === 'Leadership' && req.status === 'Leadership Approval') ||
+    (CURRENT_USER.role === 'Branch Approver' && req.status === 'Pending Approval' && canApproveRequest(req))
+  );
+  const activeItemCount = items.filter(i => (i.itemStatus||'') !== 'Removed').length;
   const eeParts = (req.eeDeduction && req.eeDeduction !== 'NO') ? req.eeDeduction.split(' / ') : [];
   const eeOn = eeParts.length > 0;
   const eeType = eeParts[0] || '';
@@ -1785,12 +1804,14 @@ function openRequestDetail(reqID) {
 
         <div class="fs-sec">
           <div class="fs-title">Items</div>
-          ${items.map(item=>`
-          <div class="ic">
+          ${items.map(item=>{ const removed = (item.itemStatus||'')==='Removed'; return `
+          <div class="ic"${removed?' style="opacity:.55"':''}>
             <div class="ich">
               <i class="ti ${typeIcon(item.itemType)}" style="font-size:18px;color:var(--navy)"></i>
-              <span class="itl">${item.itemType}</span>
-              <span style="margin-left:auto;font-weight:700;font-size:15px">${fmtAmt(item.estimatedAmount)}</span>
+              <span class="itl"${removed?' style="text-decoration:line-through"':''}>${item.itemType}</span>
+              ${removed?`<span class="bdg b-gray" style="margin-left:6px">Removed</span>`:''}
+              <span style="margin-left:auto;font-weight:700;font-size:15px${removed?';text-decoration:line-through;color:var(--muted)':''}">${fmtAmt(item.estimatedAmount)}</span>
+              ${(!removed && canRemoveItems && activeItemCount>1)?`<button class="btn btn-outline btn-sm" style="margin-left:8px" title="Remove this item from the request" onclick="removeItem('${item.id}','${req.id}')"><i class="ti ti-circle-minus"></i> Remove</button>`:''}
             </div>
             <div class="dg">
               <div><div class="dl">Detail</div><div class="dv">${item.detail||'—'}</div></div>
@@ -1805,7 +1826,7 @@ function openRequestDetail(reqID) {
               <div class="fg" style="flex:0 0 auto;justify-content:flex-end"><button class="btn btn-outline btn-sm" onclick="saveItemTracking('${item.id}','${req.id}')"><i class="ti ti-device-floppy"></i> Save</button></div>
             </div>`
             : ((item.trackingNumber||item.trackingLink)?`<div class="dg"><div><div class="dl">Tracking</div><div class="dv">${item.trackingLink?`<a class="dl-link" href="${item.trackingLink}" target="_blank"><i class="ti ti-truck-delivery" style="font-size:12px"></i>${(item.trackingNumber||'Track').split('<').join('&lt;')}</a>`:(item.trackingNumber||'—').split('<').join('&lt;')}</div></div></div>`:'')}
-          </div>`).join('')}
+          </div>`;}).join('')}
           <div style="display:flex;justify-content:space-between;padding:10px 0;border-top:2px solid var(--border)">
             <span style="font-weight:700">Total</span>
             <span class="amt${over?' over':''}" style="font-size:16px">${fmtAmt(total)}</span>
