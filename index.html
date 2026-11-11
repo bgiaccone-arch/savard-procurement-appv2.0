@@ -26,7 +26,7 @@
     LEADERSHIP_THRESHOLD: 400,   // refreshed from the server on load
     SESSION_IDLE_MINUTES: 120,   // auto sign-out after this many minutes of no activity
     TESTING_DELETE: true,        // TEMPORARY (testing): lets Super Admin select & delete ANY requests on All Requests. Set to false to disable before go-live.
-    VERSION: "4.9.15",
+    VERSION: "4.9.17",
   };
 </script>
 
@@ -878,7 +878,9 @@ function renderRequestTable(reqs, title, showBranchFilter) {
   const bulkDelete = !!CONFIG.TESTING_DELETE && showBranchFilter && CURRENT_USER.role === 'Super Admin';
   const rows = reqs.map(r => {
     const items = activeRequestItems(r.id);
-    const typeChips = items.map(i=>`<span class="tc"><i class="ti ${typeIcon(i.itemType)}" aria-hidden="true"></i>${i.itemType}</span>`).join(' ');
+    const hasTracking = items.some(i => (i.trackingNumber||'') || (i.trackingLink||''));
+    const typeChips = items.map(i=>`<span class="tc"><i class="ti ${typeIcon(i.itemType)}" aria-hidden="true"></i>${i.itemType}</span>`).join(' ')
+      + (hasTracking?` <span class="bdg b-info" style="font-size:9px;padding:1px 6px"><i class="ti ti-truck-delivery" style="font-size:10px"></i> Tracked</span>`:'');
     const total = parseFloat(r.totalAmount)||0;
     const over = total >= CONFIG.LEADERSHIP_THRESHOLD;
     const branchAttr = (r.branch||'').split('"').join('&quot;');
@@ -1925,6 +1927,7 @@ function openRequestDetail(reqID) {
                 <div style="display:flex;align-items:center;gap:6px;margin-bottom:3px">
                   <span style="font-weight:600;font-size:13px">${c.authorName||c.authorEmail}</span>
                   ${c.urgent==='TRUE'?'<span class="bdg b-warn" style="font-size:10px"><i class="ti ti-alert-triangle" style="font-size:10px"></i> Urgent</span>':''}
+                  ${(c.stage==='Leadership Approval' && req.status==='Leadership Approval')?'<span class="bdg b-pur" style="font-size:10px" title="Hidden from the requestor and branch approver while in Leadership Approval"><i class="ti ti-lock" style="font-size:10px"></i> Internal</span>':''}
                   <span style="font-size:11px;color:var(--xs);margin-left:auto">${fmtDate(c.createdAt)}</span>
                 </div>
                 <div style="font-size:13px;color:var(--text);white-space:pre-wrap">${(c.text||'').split('<').join('&lt;')}</div>
