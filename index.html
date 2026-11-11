@@ -26,7 +26,7 @@
     LEADERSHIP_THRESHOLD: 400,   // refreshed from the server on load
     SESSION_IDLE_MINUTES: 120,   // auto sign-out after this many minutes of no activity
     TESTING_DELETE: true,        // TEMPORARY (testing): lets Super Admin select & delete ANY requests on All Requests. Set to false to disable before go-live.
-    VERSION: "4.9.17",
+    VERSION: "4.9.18",
   };
 </script>
 
@@ -550,8 +550,7 @@ function showApp() {
   if (['Requestor','Branch Approver','Procurement Admin'].includes(CURRENT_USER.role)) {
     setText('page-sub', CURRENT_USER.primaryBranch);
   }
-  const showNewBtn = ['Requestor','Procurement Admin','Super Admin'].includes(CURRENT_USER.role);
-  const nb = document.getElementById('new-req-btn'); if (nb) nb.style.display = showNewBtn ? '' : 'none';
+  const nb = document.getElementById('new-req-btn'); if (nb) nb.style.display = '';  // all roles can start a request
   renderNav();
   navigate('dashboard');
 }
