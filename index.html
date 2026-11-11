@@ -26,7 +26,7 @@
     LEADERSHIP_THRESHOLD: 400,   // refreshed from the server on load
     SESSION_IDLE_MINUTES: 120,   // auto sign-out after this many minutes of no activity
     TESTING_DELETE: true,        // TEMPORARY (testing): lets Super Admin select & delete ANY requests on All Requests. Set to false to disable before go-live.
-    VERSION: "4.9.11",
+    VERSION: "4.9.12",
   };
 </script>
 
@@ -2077,6 +2077,58 @@ function itemFieldsFor(type) {
     <div class="fr"><div class="fg"><label>${amtLabel()}</label><input type="number" class="item-amount" placeholder="0.00" min="0" step="0.01"/></div></div>`;
 }
 
+// ----- Multiple items support -----
+const TRAVEL_TYPES = ['Flight','Hotel','Car Rental','Bus'];
+function categoryOf(type) { return ITEM_REQUEST_TYPES.includes(type) ? 'Item Request' : 'Travel'; }
+function typesForCategory(cat) { return cat === 'Item Request' ? ITEM_REQUEST_TYPES.slice() : TRAVEL_TYPES.slice(); }
+function itemTypeOptions(cat, selected) { return typesForCategory(cat).map(t=>`<option${t===selected?' selected':''}>${t}</option>`).join(''); }
+function itemBlockHtml(idx, type, category) {
+  return `<div class="item-block" style="border:1px solid var(--border);border-radius:8px;padding:14px;margin-bottom:10px">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+      <div class="fs-title" style="margin:0"><i class="ti ${typeIcon(type)}" style="font-size:15px;color:var(--navy);vertical-align:-2px"></i> <span class="item-block-title">Item ${idx+1}</span></div>
+      <button type="button" class="btn btn-outline btn-sm item-remove" onclick="removeItemBlock(this)" style="${idx===0?'display:none':''}"><i class="ti ti-x"></i> Remove</button>
+    </div>
+    <div class="fr"><div class="fg"><label>Item Type <span class="req">*</span></label><select class="item-type" onchange="onItemTypeChange(this)">${itemTypeOptions(category, type)}</select></div></div>
+    <div class="item-fields">${itemFieldsFor(type)}</div>
+  </div>`;
+}
+function onItemTypeChange(sel) {
+  const block = sel.closest('.item-block');
+  const t = sel.value;
+  const fields = block.querySelector('.item-fields');
+  if (fields) fields.innerHTML = itemFieldsFor(t);
+  const icon = block.querySelector('.fs-title i');
+  if (icon) icon.className = 'ti ' + typeIcon(t);
+  refreshAmountLabels();
+}
+function addItemBlock() {
+  const cont = document.getElementById('nf-items');
+  if (!cont) return;
+  const cat = categoryOf(gv('nf-type'));
+  const def = typesForCategory(cat)[0];
+  cont.insertAdjacentHTML('beforeend', itemBlockHtml(cont.querySelectorAll('.item-block').length, def, cat));
+  renumberItemBlocks();
+  refreshAmountLabels();
+}
+function removeItemBlock(btn) {
+  const cont = document.getElementById('nf-items');
+  if (cont.querySelectorAll('.item-block').length <= 1) { toast('A request needs at least one item.','warn'); return; }
+  btn.closest('.item-block').remove();
+  renumberItemBlocks();
+}
+function renumberItemBlocks() {
+  const blocks = document.querySelectorAll('#nf-items .item-block');
+  blocks.forEach((b,i)=>{
+    const t=b.querySelector('.item-block-title'); if(t) t.textContent='Item '+(i+1);
+    const rm=b.querySelector('.item-remove'); if(rm) rm.style.display = blocks.length>1 ? '' : 'none';
+  });
+}
+function refreshAmountLabels() {
+  document.querySelectorAll('#nf-dynamic .item-amount').forEach(amt=>{
+    const lbl = amt.closest('.fg') && amt.closest('.fg').querySelector('label'); if (lbl) lbl.innerHTML = amtLabel();
+  });
+}
+
 // Rebuild the dynamic part of the form for the selected type.
 function renderRequestFields() {
   const type = gv('nf-type');
@@ -2093,15 +2145,20 @@ function renderRequestFields() {
     return;
   }
   const isItem = ITEM_REQUEST_TYPES.includes(type);
+  const category = categoryOf(type);
   dyn.innerHTML = `
     <div class="fs-sec">
       <div class="fs-title">${isItem ? 'For' : 'Traveler / Employee'}</div>
       ${personFieldsFor(type)}
     </div>
     <div class="fs-sec">
-      <div class="fs-title"><i class="ti ${typeIcon(type)}" style="font-size:16px;color:var(--navy);vertical-align:-2px"></i> ${type} Details</div>
-      ${itemFieldsFor(type)}
+      <div class="ich" style="justify-content:space-between;margin-bottom:10px">
+        <div class="fs-title" style="margin:0">Items</div>
+        <button type="button" class="aib" onclick="addItemBlock()"><i class="ti ti-plus"></i> Add another item</button>
+      </div>
+      <div id="nf-items">${itemBlockHtml(0, type, category)}</div>
     </div>`;
+  refreshAmountLabels();
 }
 
 // Type changed — rebuild the dynamic fields entirely.
@@ -2117,8 +2174,7 @@ function onKindChange() {
     : 'A purchase request is routed for approval, then booked by procurement.';
   const billing = document.getElementById('nf-billing');
   if (billing) billing.style.display = quote ? 'none' : '';
-  const amt = document.querySelector('#nf-dynamic .item-amount');
-  if (amt) { const lbl = amt.closest('.fg').querySelector('label'); if (lbl) lbl.innerHTML = amtLabel(); }
+  refreshAmountLabels();
 }
 
 function toggleEEDed() {
@@ -2136,30 +2192,33 @@ async function collectAndSubmit() {
   if (!travName.trim()) { toast('Name is required.','err'); return; }
   const kind = gv('nf-kind') || 'Purchase Request';
   const quote = kind === 'Quote Request';
-  const category = ITEM_REQUEST_TYPES.includes(type) ? 'Item Request' : 'Travel';
-  const root = document.getElementById('nf-dynamic');
 
-  const amount = parseFloat(root.querySelector('.item-amount')?.value||0);
-  // Estimated amount is optional for all request types.
-  const qty = root.querySelector('.item-qty')?.value || '';
-  let detail = root.querySelector('.item-detail,.item-dep')?.value||'';
-  if (qty && parseInt(qty,10) > 1 && detail) detail = `Qty ${qty} — ${detail}`;
-
-  const item = {
-    type, category, amount, detail,
-    departureLocation: root.querySelector('.item-dep')?.value||'',
-    arrivalLocation: root.querySelector('.item-arr')?.value||'',
-    departureDate: root.querySelector('.item-depdate')?.value||'',
-    tripType: root.querySelector('.item-triptype')?.value||'One Way',
-    checkIn: root.querySelector('.item-checkin')?.value||'',
-    checkOut: root.querySelector('.item-checkout')?.value||'',
-    guestName: root.querySelector('.item-guestname')?.value||'',
-    guestDOB: root.querySelector('.item-guestdob')?.value||'',
-    cityOfStay: root.querySelector('.item-city')?.value||'',
-    pickupLocation: root.querySelector('.item-pickup')?.value||'',
-    dropoffLocation: root.querySelector('.item-dropoff')?.value||'',
-    vendor: root.querySelector('.item-vendor')?.value||'',
-  };
+  // Collect every item block into the items array (total is summed server-side).
+  const blocks = [...document.querySelectorAll('#nf-items .item-block')];
+  if (!blocks.length) { toast('Add at least one item.','err'); return; }
+  const items = blocks.map(root => {
+    const itype = root.querySelector('.item-type')?.value || type;
+    const qty = root.querySelector('.item-qty')?.value || '';
+    let detail = root.querySelector('.item-detail,.item-dep')?.value||'';
+    if (qty && parseInt(qty,10) > 1 && detail) detail = `Qty ${qty} — ${detail}`;
+    return {
+      type: itype, category: categoryOf(itype),
+      amount: parseFloat(root.querySelector('.item-amount')?.value||0) || 0,
+      detail,
+      departureLocation: root.querySelector('.item-dep')?.value||'',
+      arrivalLocation: root.querySelector('.item-arr')?.value||'',
+      departureDate: root.querySelector('.item-depdate')?.value||'',
+      tripType: root.querySelector('.item-triptype')?.value||'One Way',
+      checkIn: root.querySelector('.item-checkin')?.value||'',
+      checkOut: root.querySelector('.item-checkout')?.value||'',
+      guestName: root.querySelector('.item-guestname')?.value||'',
+      guestDOB: root.querySelector('.item-guestdob')?.value||'',
+      cityOfStay: root.querySelector('.item-city')?.value||'',
+      pickupLocation: root.querySelector('.item-pickup')?.value||'',
+      dropoffLocation: root.querySelector('.item-dropoff')?.value||'',
+      vendor: root.querySelector('.item-vendor')?.value||'',
+    };
+  });
 
   // Upload attachment (if any) through the backend before writing the request.
   let attachmentLink = '';
@@ -2199,7 +2258,7 @@ async function collectAndSubmit() {
     comments: gv('nf-comments'),
     link: gv('nf-link'),
     attachmentLink,
-    items: [item],
+    items,
   });
   hideLoading();
 }
